@@ -1,0 +1,19 @@
+node_modules/
+.wrangler/
+.dev.vars
+.env
+
+# Local-only data and credentials
+.DS_Store
+._*
+.claude/
+.openai/
+.wrangler/
+.esphome/
+node_modules/
+.env
+.env.*
+!.env.example
+.dev.vars*
+secrets.yaml
+worker-configuration.d.ts

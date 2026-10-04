@@ -1,0 +1,18 @@
+{
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "wrangler": "^4.138.0"
+  },
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/game.js --bundle --minify --format=esm --outfile=dist/game.js",
+    "dev": "wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "cannon-es": "^0.20.0",
+    "three": "^0.186.1"
+  },
+  "type": "module"
+}

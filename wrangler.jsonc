@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "horizont-iphone",
+  "compatibility_date": "2026-09-24",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/api/*"
+    ]
+  },
+  "main": "worker/index.mjs",
+  "routes": [
+    {
+      "pattern": "stubenflieger.8e4.de",
+      "custom_domain": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stubenflieger-leaderboard",
+      "database_id": "4777afc3-8c6f-45d1-a97b-8b2659bbd540",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
