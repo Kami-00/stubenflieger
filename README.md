@@ -29,7 +29,7 @@ Start, Kollision/Einsturz, Ergebnis, Neustart und Pause wurden im Browser geprü
 
 ## Domain, Bestenliste und manuelle Drehung
 
-- Live: https://stubenflieger.8e4.de (Schreibweise wie gewünscht).
+- Live: https://stubenflieger.8e4.de.
 - Menü → „Ansicht um 90° drehen“ rotiert die komplette Darstellung. Die Wahl wird auf diesem Gerät gespeichert; Touch-Koordinaten und Sensorachsen werden mitgedreht. Die iPhone-Rotationssperre schaltet der Spieler selbst im Kontrollzentrum ein.
 - Nach einem Flug lässt sich das Ergebnis mit einem öffentlichen Pilotnamen speichern. Die Top 20 werden aus Cloudflare D1 geladen. Punkte: 100 pro Klotz plus 10 pro Flugsekunde (auf Zehntelsekunden abgerundet).
 - Neue Datenbanken mit `npx wrangler d1 migrations apply stubenflieger-leaderboard --remote` initialisieren. Für lokale Tests `--local` verwenden.
