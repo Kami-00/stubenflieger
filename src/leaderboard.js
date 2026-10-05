@@ -17,6 +17,8 @@ export function initLeaderboard(){
  }
  async function refresh(){
   const sequence=++loadSequence;
+  const focus=document.activeElement;
+  if(!$('leaderboard').hidden&&(focus===$('refresh-leaderboard')||$('ranking-table').contains(focus)))$('close-leaderboard').focus();
   $('leaderboard-status').textContent='Bestenliste wird geladen …';$('ranking-table').hidden=true;$('refresh-leaderboard').disabled=true;
   try{
    const {entries}=await api('/api/leaderboard');if(sequence!==loadSequence)return;
@@ -29,11 +31,15 @@ export function initLeaderboard(){
  $('refresh-leaderboard').onclick=()=>void refresh();
  $('score-form').addEventListener('submit',async event=>{
   event.preventDefault();if(!result||result.saved)return;
-  const current=result,name=$('pilot-name').value.trim();$('save-score').disabled=true;$('score-status').textContent='Dein Flug wird eingetragen …';
+  const current=result,name=$('pilot-name').value.trim();
+  if(document.activeElement===$('save-score'))$('pilot-name').focus();
+  $('save-score').disabled=true;$('score-status').textContent='Dein Flug wird eingetragen …';
   try{
    const run=await current.ticket;if(!run)throw new Error('Dieser Flug konnte nicht online gestartet werden. Bitte prüfe deine Verbindung und fliege noch eine Runde.');
    const saved=await api('/api/leaderboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({run,name,blocks:current.blocks,flightMs:current.flightMs})});
-   if(current!==result)return;current.saved=true;$('save-score').textContent='✓ Gespeichert';$('pilot-name').disabled=true;$('score-status').textContent=`${saved.points.toLocaleString('de-DE')} Punkte gespeichert. Dein Flug steht jetzt in der gemeinsamen Bestenliste.`;
+   if(current!==result)return;current.saved=true;$('save-score').textContent='✓ Gespeichert';
+   if(!$('result').hidden&&document.activeElement===$('pilot-name'))$('result-leaderboard').focus();
+   $('pilot-name').disabled=true;$('score-status').textContent=`${saved.points.toLocaleString('de-DE')} Punkte gespeichert. Dein Flug steht jetzt in der gemeinsamen Bestenliste.`;
    try{localStorage.setItem('stubenflieger.pilot',name);}catch{}
   }catch(error){if(current===result){$('score-status').textContent=error.message;$('save-score').disabled=false;}}
  });
