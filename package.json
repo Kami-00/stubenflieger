@@ -7,7 +7,7 @@
   "scripts": {
     "build": "esbuild src/game.js --bundle --minify --format=esm --outfile=dist/game.js",
     "dev": "wrangler dev",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm test && npm run build && wrangler deploy --keep-vars --strict",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
