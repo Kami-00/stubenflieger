@@ -1,70 +1,83 @@
 # Stubenflieger
 
-Ein 3D-Webspiel mit acht wachsenden Leveln, Flugsternen und verbundenen Räumen, veröffentlicht über Cloudflare Workers Static Assets.
+Ein 3D-Papierflieger-Spiel mit einem zusammenhängenden Haus: Keller, Erdgeschoss, Obergeschoss, Dachspitz und Garten. Die neue Fassung ersetzt die acht Level durch einzelne Haus-Runs.
 
-Die aktuelle Spielbasis stammt aus der am 29. September 2026 veröffentlichten Fassung. Sie ist vollständig in diesem Repository enthalten: `src/levels.js` definiert die Level, `src/physics.js` die Kollisionen und die Höhenbegrenzung, `src/scene.js` die Darstellung. Zehn Spieleinheiten entsprechen 2,8 Metern Raumhöhe. `src/vendor.js` enthält das ursprüngliche Three.js-/Cannon-Bundle samt Lizenzhinweisen. Änderungen werden hier gepflegt; `npm run build` erstellt daraus `dist/game.js`.
+## Spielablauf
 
-## Spielen
+- Start im Wohnzimmer. Das ganze Gebäude ist bereits eingerichtet; 22 Türen sind zunächst geschlossen.
+- 96 Sterne öffnen nach und nach Türen. Sterne werden dabei nicht ausgegeben. Türschilder zeigen die erforderliche Gesamtzahl.
+- Ein Run ist geschafft, sobald alle Sterne gesammelt sind. Es gibt keine Klotzpflicht.
+- Der Standardflieger hat rund 43 cm Spannweite und fliegt mit 1,65 m/s. Sein Wenderadius liegt unter einem Meter; das langsame Sinken lässt Zeit für die ersten Kurven im Wohnzimmer. Die Größenprozente im Shop beziehen sich auf diese kompakte Grundform.
+- Küche und Esszimmer sind direkt verbunden. Wohn- und Esszimmer besitzen Terrassentüren, dazu kommen Haustür, drei offene Seitenfenster und ein Dachfenster.
+- Türkise Aufwinde führen durchs Treppenhaus und außen nach oben. Im Wirbel hält Steigen oder Sinken den Flieger zur Mitte; seitliches Lenken verlässt ihn.
+- Sterne liegen auch unter Tischen und Stühlen. Tischplatten, Sitzflächen und Beine haben getrennte Kollisionsformen.
+- Jeder erstmals betretene Raum bringt 250 Extrapunkte pro Run. Der Startraum zählt nicht, Teilrechtecke desselben Raums und wiederholtes Betreten ebenfalls nicht. Bereits gekaufte Türen bezahlen keinen Bonus beim Neustart.
 
-- iPhone: In Safari öffnen, Neigungssteuerung aktivieren und die Sensorfreigabe bestätigen. Beim Start wird die aktuelle Haltung zur neutralen Position. Seitlich neigen lenkt; vor/zurück neigen verändert den Steigflug. Bei Bedarf mit „Kalibrieren“ neu zentrieren.
-- Start: Die gelbe Schleuderfläche gedrückt halten oder nach unten ziehen und loslassen. Seitlich ziehen ändert die Abschussrichtung.
-- Touch: Während des Flugs den Steuerkreis ziehen. Oben bedeutet steigen, unten sinken.
-- Tastatur: Leertaste halten und loslassen zum Start; WASD oder Pfeile zum Fliegen. Alle Tasten stehen unten und im Flugmenü.
-- Türkisfarbene Wirbel geben Höhe und Geschwindigkeit. Holzklötze reagieren physikalisch auf Zusammenstöße. Wände, Möbel und Boden beenden den Flug.
-- Ziel: Alle Flugsterne sammeln und das Klotz-Ziel des jeweiligen Levels erreichen. Danach führt „Nächstes Level“ in weitere Räume. Im Menü lassen sich alle acht Level auswählen.
-- Die Raumhöhe beträgt 2,8 m. Eine Warnung zeigt die nahe Decke; Kollision und Höhenbegrenzung verhindern Flüge darüber. Die Höhenanzeige rechnet Spieleinheiten in Meter um.
+## Dauerhafter Shop
 
-## Vollständig mit Tastatur bedienen
+Alles wird einmal mit erspielten Punkten gekauft und bleibt freigeschaltet:
 
-Mit `Tab` die Spielfläche oder eine Schaltfläche auswählen; `Shift+Tab` geht zurück. Ein gelber Rahmen zeigt den Fokus. Die Spieltasten gelten auf der Spielfläche. Auf einer ausgewählten Schaltfläche lösen `Enter` oder `Leertaste` deren Aktion aus.
+- **Türen:** gekaufte Türen können in jedem Run von Anfang an offen sein. Ein Schalter ermöglicht weiterhin Runs mit allen Türen geschlossen.
+- **Größe:** nach dem Upgrade zwischen 55 und 150 Prozent einstellbar. Groß sinkt langsamer und gleitet weiter; klein kurvt enger und passt durch kleinere Lücken.
+- **Flugzeuge:** Klassiker, Gleiter, Pfeil und Kunstflieger mit unterschiedlichen Flugeigenschaften.
+- **Boosts:** Aufwind, Turbo, Sternmagnet und Luftpolster. Höchstens zwei ausrüsten, jeden einmal pro Run nutzen; der Kauf selbst wird nie verbraucht.
+- **Effekte:** Minzspur, Sternenstaub und Konfettispur.
 
-| Taste | Aktion |
+Guthaben, persönlicher Rekord, Käufe und Ausrüstung liegen im Browser auf diesem Gerät. Sie werden nicht mit anderen Geräten synchronisiert; gelöschte Website-Daten löschen auch das Profil. Schreibfehler werden angezeigt, ohne einen Kauf abzuziehen oder als gespeichert auszugeben. Run-Abrechnungen sind gegen doppelte Gutschrift geschützt. Ein in diesem Tab neu geladenes Spiel rechnet den letzten Zwischenstand aus dem Sitzungsspeicher ab; es setzt den Flug nicht fort.
+
+Punkte: 150 pro Stern, 250 pro neu erreichtem Raum und 10 pro Flugsekunde für maximal 60 Sekunden. Der Punktestand eines Runs wird beim Beenden oder Neustarten dem Guthaben gutgeschrieben. Die Wertungsfunktion unterstützt weiterhin 100 Punkte pro Klotz; im neuen Haus sind derzeit keine Klotztürme platziert.
+
+## Steuerung
+
+| Taste / Eingabe | Aktion |
 | --- | --- |
-| Leertaste halten, dann loslassen | Vor dem Start Schleuderstärke aufbauen und starten |
-| A / D oder Pfeil links / rechts | Vor dem Start die Abschussrichtung ändern |
-| Enter | Schnellstart |
-| A / D oder Pfeil links / rechts | Im Flug nach links / rechts lenken |
-| W / S oder Pfeil hoch / runter | Im Flug steigen / sinken |
-| Esc oder P | Flug pausieren / weiterfliegen |
-| R | Neuen Flug vorbereiten |
-| M | Menü öffnen |
-| B | Bestenliste öffnen |
-| T | Ton ein- / ausschalten |
+| Leertaste halten und loslassen / gelbe Startfläche ziehen | Startstärke wählen und abheben |
+| Enter auf der Spielfläche | Schnellstart |
+| A/D oder links/rechts | Vor dem Start ausrichten, im Flug lenken |
+| W/S oder hoch/runter | Steigen und sinken |
+| 1 / 2 | Ausgerüsteten Boost aktivieren |
+| Esc / P | Pausieren, fortsetzen oder Dialog schließen |
+| R | Run abrechnen und neu vorbereiten |
+| M / G / B / T | Menü / Shop vor oder nach dem Run / Bestenliste / Ton |
+| Touch-Kreis | Ziehen zum Lenken und Steigen/Sinken |
+| Neigung | Nach Sensorfreigabe seitlich lenken, vor/zurück die Höhe steuern |
 
-In jedem Dialog lassen sich alle Schaltflächen mit `Tab` und `Shift+Tab` erreichen und mit `Enter` oder `Leertaste` bedienen. Im Ergebnisdialog ist auch das Pilotnamenfeld erreichbar; „Eintragen“ oder Enter im Namensfeld speichert das Ergebnis. Während der Eingabe lösen Buchstaben und Leerzeichen keine Spielaktionen aus. Pause und Ergebnis bieten jeweils „Menü öffnen“ für den Zugang zu Drehung und Bestenliste.
+Tab und Shift+Tab navigieren durch Schaltflächen. Dialoge halten den Fokus; Eingabefelder lösen keine Spielkürzel aus. Tab, Fokusverlust und versteckte Browserfenster pausieren einen laufenden Flug. Sensoren erfordern auf einem echten iPhone HTTPS und die ausdrückliche Browserfreigabe. Die Ansicht kann im Menü um jeweils 90° gedreht werden, unabhängig von der iPhone-Rotationssperre.
 
-Level wählen: `M` öffnet das Menü, `Tab` erreicht „Level wählen“. Mit den Pfeiltasten oder `Pos1` / `Ende` wird ein Level ausgewählt. Mit `Tab` zu „Gewähltes Level spielen“ wechseln und mit `Enter` bestätigen. Erst dann wird das Level geladen und die Schleuder fokussiert. Nach einem erfolgreichen Flug ist „Nächstes Level“ direkt mit `Enter` erreichbar.
+## Aufbau
 
-`Tab` pausiert einen laufenden Flug, bevor du die Bedienelemente auswählst. Beim Wechsel in ein Menü, in einen anderen Tab oder in ein anderes Fenster werden gehaltene Tasten und ein gespannter Start abgebrochen. Zurückkehren allein startet keinen Flug.
+- `src/house.js`: Maßstab in Metern, Räume, Türanschläge, Öffnungen, Möbelteile, Sterne und Aufwinde.
+- `src/aircraft.js`: gemeinsame sichtbare Geometrie und Kollisionsgeometrie mit geschlossener Mitte. Klassiker mit geraden Flügelenden, spitzer Pfeil, gerundeter Gleiter und rechteckiger Kunstflieger; der Shop zeigt die tatsächlichen Konturen.
+- `src/physics.js`: kontinuierliche Kollisionsprüfung, gedrehte Türblätter, großzügiger Sternfang über die Flügel und den zurückgelegten Flugweg; Wände und geschlossene Türen blockieren auch den Magneten.
+- `src/scene.js`: Darstellung der Hausgeometrie und Effekte. Kamerakorrekturen ändern keine Kollisionen.
+- `src/run.js` / `src/flight.js`: Run-Fortschritt, Räume, Boostladungen und bidirektionale Aufwindhilfe.
+- `src/progression.js` / `src/shop.js`: dauerhaftes Profil und Shop.
+- `worker/index.mjs`: Haus-Bestenliste und unveränderte historische Level-API.
 
-`Esc` schließt Menü und Bestenliste, setzt einen pausierten Flug fort und bereitet im Ergebnisdialog einen neuen Flug vor. Die Platzierungsliste ist selbst mit `Tab` erreichbar: Bei einer langen Liste scrollen die Pfeiltasten sowie `Bild auf` und `Bild ab`. Im Fehlerdialog lässt sich „Erneut versuchen“ per Tastatur auslösen.
+Die neue Spielszene verwendet die installierten Three.js- und Cannon-Abhängigkeiten. `src/vendor.js` und `src/levels.js` bleiben für die dokumentierte historische Fassung beziehungsweise deren Bestenlistenvalidierung erhalten.
 
-## Entwicklung
+## Entwicklung und Prüfung
 
-`npm ci` installiert die gesperrten Abhängigkeiten.
+`npm ci` installiert die festgeschriebenen Abhängigkeiten. `npm run build` erzeugt `dist/game.js`, `npm run dev` startet den lokalen Worker. `npm test` prüft Hausaufbau, Fortschritt, Fliegergeometrie, Türen/Fenster, Sternaufnahme, Profil, Steuerung und beide Bestenlisten-APIs.
 
-`npm run build` bündelt das Spiel nach `dist/game.js`.
+`test/integration.mjs` prüft eine echte lokale Worker-/D1-Instanz auf Port 8796. `test/house-browser.cjs` verwendet Playwright mit Edge gegen denselben lokalen Server; `NODE_PATH` kann auf eine vorhandene Playwright-Installation zeigen. Es nutzt einen isolierten Browserkontext mit Testguthaben und lehnt entfernte Server ab.
 
-`npm run dev` startet Wrangler lokal. Sensoren auf einem echten iPhone benötigen HTTPS.
+Geprüft für die Hausfassung: alle 22 offenen Türen in beide Richtungen, drei offene Seitenfenster, freie Sammelpositionen für alle 96 Sterne auch mit dem kostenlosen Standardflieger, Untertisch-/Stuhlflug, schmale Lücken bei unterschiedlichen Größen, schnelle Wandkontakte, Auf- und Abstieg im Treppenschacht, dauerhafte Käufe, Speicherfehler, Größenregler, zwei Boostplätze, Reload-Abrechnung und Tastaturfokus. Shopdarstellung wurde bei 320 und 390 Pixel Breite, im Querformat und am Desktop geprüft.
 
-`npm test` prüft alle acht Level, Raumverbindungen, Flugsterne, die 2,8-m-Höhenbegrenzung, Physik, Punkte und Levelbindung der Bestenliste sowie Tastaturaktionen, Formularschutz und das Abbrechen gehaltener Tasten.
+Diese Prüfungen ersetzen keinen vollständigen manuell geflogenen Haus-Run. Sensorverhalten und tatsächliche Bildrate auf einem physischen iPhone sind noch separat zu prüfen.
 
-`npm run deploy` führt zuerst die Tests aus, baut und veröffentlicht auf dem in `wrangler.jsonc` konfigurierten Cloudflare-Konto.
+Nach der Tempokorrektur prüft `test/intro-flight.test.mjs` eine echte Flugroute bei 30, 60 und 120 FPS: Der kostenlose Standardflieger sammelt zwei Wohnzimmersterne, öffnet die Flurtür und passiert sie vollständig ohne Kollision. Dieselbe Tastenfolge wurde zusätzlich in der gebauten Browserfassung bis in den Flur gespielt (drei Sterne einschließlich Flurstern).
 
-## Prüfung
+## Bestenliste und Veröffentlichung
 
-Die Veröffentlichung vom 29. September 2026 (`cdd8041e-89af-458a-a39f-560617804263`) ist die Ausgangsbasis für Level, Flugsterne, Höhe und Bestenliste. Die Tastaturbedienung wurde am 5. Oktober auf diese Fassung übertragen. Der zuvor importierte Einraum-Spielstand ist damit ersetzt.
+Die Haus-Runs verwenden `/api/house-runs` und `/api/house-leaderboard`. Die bisherige Level-Bestenliste bleibt erhalten. Der Server prüft Ergebnisse, Laufzeiten, Räume und doppelte Einreichungen und berechnet die Punkte selbst. Die Flugsimulation und das Shopguthaben liegen im Browser; dies ist keine manipulationssichere Turnierwertung.
 
-Geprüft am 5. Oktober: 28 automatisierte Tests, Produktionsbuild, Wrangler-Veröffentlichungssimulation und echte lokale Worker-/D1-Integration einschließlich 156 Klötzen, 96 Sternen, Punkteberechnung und wiederholtem Speichern. Die produktive Datenbank meldete keine ausstehenden Migrationen. Im Browser wurden ausschließlich per Tastatur Level 3 und 8 ausgewählt, gestartet und pausiert. Ein echter Testflug sammelte einen Stern; Höhe und Ergebnis zeigten die korrekten Meter-/Sternwerte. Das Ergebnis wurde mit Enter nur in der lokalen Bestenliste gespeichert. Menü-/Bestenlistenrückwege blieben pausiert und es traten keine Browserfehler auf.
+Die additive Migration `migrations/0002_house_runs.sql` muss vor der Veröffentlichung auf der produktiven Datenbank angewendet werden. Die beiden alten Migrationen bleiben erhalten; keine Tabelle zurücksetzen. Lokale Vorbereitung:
 
-Das Halten, Wiederholen und Loslassen von Tasten sowie Fokus- und Sichtbarkeitsverlust sind zusätzlich durch automatisierte Regressionstests abgedeckt. Der Fehlerdialog wurde strukturell geprüft; ein WebGL-Ausfall wurde im Browser nicht künstlich ausgelöst. Die tatsächliche Sensorreaktion und Bildrate müssen auf einem physischen iPhone geprüft werden. Die zuvor dokumentierte Sichtprüfung in iPhone-Hoch- und Querformat wurde bei dieser Tastaturänderung nicht wiederholt.
+```sh
+npx wrangler d1 migrations apply stubenflieger-leaderboard --local
+npm run build
+npm run dev
+```
 
-## Domain, Bestenliste und manuelle Drehung
-
-- Live: https://stubenflieger.8e4.de.
-- Menü → „Ansicht um 90° drehen“ rotiert die komplette Darstellung. Die Wahl wird auf diesem Gerät gespeichert; Touch-Koordinaten und Sensorachsen werden mitgedreht. Die iPhone-Rotationssperre schaltet der Spieler selbst im Kontrollzentrum ein.
-- Nach einem Flug lässt sich das Ergebnis mit einem öffentlichen Pilotnamen speichern. Die Top 20 werden aus Cloudflare D1 geladen. Punkte: 100 pro Klotz, 150 pro Flugstern und 10 pro Flugsekunde (auf Zehntelsekunden abgerundet).
-- Neue Datenbanken mit `npx wrangler d1 migrations apply stubenflieger-leaderboard --remote` initialisieren. Für lokale Tests `--local` verwenden.
-- Beide Migrationen bleiben erhalten: `0001_leaderboard.sql` für ursprüngliche Einträge und die am 29. September bereits veröffentlichte additive `0001_flights_v2.sql` für Sterne und Level. Keine Produktionstabellen zurücksetzen. `test/integration.mjs` prüft ausschließlich die lokale Worker-/D1-Instanz auf Port 8796.
-- Die API berechnet Punkte, prüft Werte und Laufzeiten und verhindert doppelte Einträge desselben Flugs. Die eigentliche Spielsimulation läuft im Browser; dies ist keine manipulationssichere Turnierwertung.
-- Testdaten wurden nur in der lokalen Entwicklungsdatenbank angelegt.
+`npm run deploy` prüft, baut und veröffentlicht auf das konfigurierte Cloudflare-Konto. Eine Veröffentlichung und die produktive Migration sind getrennte Schritte; lokale Änderungen allein aktualisieren die öffentliche Website nicht.

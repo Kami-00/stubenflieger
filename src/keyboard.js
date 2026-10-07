@@ -17,20 +17,24 @@ export function createKeyboardControls({window,document,keys,getState,getDialog,
    if(event.repeat)return;
    clear();
    if(dialog==='leaderboard')actions.closeBoard();
+   else if(dialog==='shop')actions.closeShop?.();
    else if(dialog==='menu')actions.closeMenu();
    else if(dialog==='result')actions.reset();
    else if(dialog!=='error')actions.pause();
    return;
   }
   if(event.target.closest?.(editableSelector)||dialog==='error')return;
-  const shortcuts={KeyR:'reset',KeyM:dialog==='menu'?'closeMenu':dialog==='leaderboard'?'closeBoard':'menu',KeyB:'board',KeyT:'sound'};
+  const shortcuts={KeyR:'reset',KeyM:dialog==='menu'?'closeMenu':dialog==='leaderboard'?'closeBoard':dialog==='shop'?'closeShop':'menu',KeyB:'board',KeyT:'sound',KeyG:dialog==='shop'?'closeShop':'shop'};
   const action=shortcuts[event.code];
-  if(action){event.preventDefault();if(!event.repeat){clear();actions[action]();}return;}
+  if(action&&actions[action]){event.preventDefault();if(!event.repeat){clear();actions[action]();}return;}
   if(event.code==='KeyP'){
    if(!dialog||dialog==='paused'){event.preventDefault();if(!event.repeat){clear();actions.pause();}}
    return;
   }
   if(dialog)return;
+  if((event.code==='Digit1'||event.code==='Digit2')&&getState()==='flying'){
+   event.preventDefault();if(!event.repeat)actions.boost?.(event.code==='Digit1'?0:1);return;
+  }
   const nativeControl=event.target.closest?.('button,a[href],[role="button"]');
   if(event.code==='Space'){
    if(nativeControl&&nativeControl!==launcher)return;

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { validateScore } from '../worker/index.mjs';
+import worker, { validateScore, validateHouseScore } from '../worker/index.mjs';
 import { LEVELS } from '../src/levels.js';
+import { HOUSE } from '../src/house.js';
 
 const origin = 'https://stubenflieger.8e4.de';
 const runId = 'da678781-4d31-4274-a69e-799e01ae86de';
@@ -148,4 +149,79 @@ test('origin, JSON type and the 2 KB body limit remain enforced', async () => {
   assert.equal((await worker.fetch(request('/api/runs', { level: 1 }, { headers: { origin: 'https://example.com' } }), { DB: db })).status, 403);
   assert.equal((await worker.fetch(request('/api/runs', { level: 1 }, { headers: { 'content-type': 'text/plain' } }), { DB: db })).status, 400);
   assert.equal((await worker.fetch(request('/api/runs', { level: 1, padding: 'a'.repeat(2048) }), { DB: db })).status, 400);
+});
+
+const houseSample = { run: runId, name: 'Haus Pilot', blocks: 0, stars: 2, roomIds: ['dining', 'kitchen'], complete: false, flightMs: 999 };
+function houseDB({ race = false } = {}) {
+  const records = new Map();
+  return {
+    records,
+    prepare(sql) {
+      assert.match(sql, /house_runs/);
+      return {
+        sql, values: [], bind(...values) { this.values = values; return this; },
+        async first() { const row = records.get(this.values[0]); return row ? { ...row } : null; },
+        async all() {
+          assert.match(sql, /LIMIT 20/); assert.doesNotMatch(sql, /flights_v2|UNION/);
+          return { results: [...records.values()].filter(row => row.name !== null).map(({ name, blocks, stars, rooms, complete, flightMs, points }) => ({ name, blocks, stars, rooms, complete, flightMs, points })) };
+        },
+        async run() {
+          const [name, blocks, stars, rooms, roomIds, complete, flightMs, points, submitted_at, id] = this.values;
+          const row = records.get(id);
+          if (!row || row.name !== null) return { meta: { changes: 0 } };
+          assert.match(sql, /WHERE id = \? AND name IS NULL/);
+          Object.assign(row, { name, blocks, stars, rooms, roomIds, complete, flightMs, points, submitted_at });
+          return { meta: { changes: race ? 0 : 1 } };
+        },
+      };
+    },
+    async batch(statements) {
+      for (const statement of statements) {
+        if (statement.sql.startsWith('INSERT')) {
+          const [id, started_at] = statement.values;
+          records.set(id, { started_at, name: null, blocks: 0, stars: 0, rooms: 0, roomIds: '[]', complete: 0, flightMs: null });
+        }
+      }
+    },
+  };
+}
+
+test('house scores use bounded stars, real room IDs, server scoring and capped time', () => {
+  assert.equal(validateHouseScore({ ...houseSample, points: 999999 }).points, 809);
+  assert.equal(validateHouseScore({ ...houseSample, roomIds: ['living', 'dining'] }).points, 559);
+  assert.equal(validateHouseScore({ ...houseSample, flightMs: 1_800_000 }).points, 1400);
+  assert.equal(validateHouseScore({ ...houseSample, stars: HOUSE.collectibles.length, complete: true }).complete, true);
+  const segment = HOUSE.rooms.find(room => room.bonusId);
+  assert.equal(validateHouseScore({ ...houseSample, roomIds: [segment.id, segment.bonusId] }).rooms, 1);
+  for (const patch of [
+    { stars: HOUSE.collectibles.length + 1 }, { stars: -1 }, { stars: 1.5 }, { blocks: 999999 },
+    { roomIds: ['dining', 'dining'] }, { roomIds: ['unknown'] }, { roomIds: 'dining' }, { complete: 'true' },
+    { complete: true }, { flightMs: 499 }, { run: '---------------------' }, { name: '<script>' },
+  ]) assert.throws(() => validateHouseScore({ ...houseSample, ...patch }));
+});
+
+test('house ticket and conditional saves are isolated, retry-safe and reject changed results', async () => {
+  const db = houseDB();
+  const start = await worker.fetch(request('/api/house-runs', {}), { DB: db });
+  assert.equal(start.status, 201);
+  const { run } = await start.json();
+  const score = { ...houseSample, run };
+  const saved = await worker.fetch(request('/api/house-leaderboard', score), { DB: db });
+  assert.equal(saved.status, 201);
+  assert.deepEqual(await saved.json(), { saved: true, points: 809 });
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...score, roomIds: ['kitchen', 'dining'] }), { DB: db })).status, 200);
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...score, stars: 3 }), { DB: db })).status, 409);
+  const listing = await worker.fetch(request('/api/house-leaderboard', undefined, { method: 'GET' }), { DB: db });
+  assert.equal((await listing.json()).entries[0].rooms, 2);
+});
+
+test('house results enforce elapsed time, ticket lifetime, origin and concurrent retry', async () => {
+  const db = houseDB({ race: true });
+  db.records.set(runId, { started_at: Date.now(), name: null });
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...houseSample, flightMs: 10000 }), { DB: db })).status, 400);
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', houseSample), { DB: db })).status, 200);
+  db.records.set(runId, { started_at: Date.now() - 86_401_000, name: null });
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', houseSample), { DB: db })).status, 400);
+  assert.equal((await worker.fetch(request('/api/house-runs', {}, { headers: { origin: 'https://example.invalid' } }), { DB: db })).status, 403);
+  assert.equal((await worker.fetch(request('/api/house-runs', [], {}), { DB: db })).status, 400);
 });

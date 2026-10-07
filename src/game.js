@@ -1,7 +1,12 @@
-import { Vector3, MathUtils } from './vendor.js';
-import { LEVELS, getLevel, METERS_PER_UNIT } from './levels.js';
+import { Vector3, MathUtils, Euler, Quaternion } from 'three';
+import { HOUSE, getRoomAt } from './house.js';
+import { flightTuning } from './aircraft.js';
+import { flightForces } from './flight.js';
 import { createPhysics } from './physics.js';
 import { createScene } from './scene.js';
+import { createProgression, calculateRunScore, CATALOG, ROOM_BONUS } from './progression.js';
+import { createRunState } from './run.js';
+import { createShop } from './shop.js';
 import { createLeaderboard } from './leaderboard.js';
 import { createKeyboardControls } from './keyboard.js';
 import { createDialogs } from './dialogs.js';
@@ -10,13 +15,26 @@ const $ = id => document.getElementById(id);
 const show = (id, visible) => { $(id).hidden = !visible; };
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const dialogs = createDialogs(document, $('app'));
-let keyboard;
+const progression = createProgression();
+const leaderboard = createLeaderboard();
+const PENDING_KEY = 'stubenflieger.pending-run.v1';
+const totalRooms = new Set(HOUSE.rooms.map(room => room.bonusId || room.id)).size;
+const nameOf = id => CATALOG.find(item => item.id === id)?.name || id;
+let keyboard, physics, view, run, tuning, equipped, shop;
+let state = 'ready', paused = false, charging = false, power = 0, chargeStart = 0, dragPower = 0, launchTurn = 0;
+let heading = 0, speed = 0, verticalSpeed = 0, flightTime = 0, clock = 0, endingAt = 0, endReason = '', won = false;
+let chargePointer = null, stickPointer = null, chargeOrigin = { x: 0, y: 0 }, touch = { steer: 0, pitch: 0 }, input = { steer: 0, pitch: 0 };
+let sensorEnabled = false, sensor = null, calibration = null, sensorAt = 0, sensorTimeout, inThermal = false, nearCeiling = false;
+let sound = false, audio, rotation = 0, settled = false, launched = false, storageError = '';
+let liftUntil = 0, turboUntil = 0, magnetUntil = 0, cushion = false, recoveryUntil = 0;
+const keys = new Set(), position = new Vector3(), previousPosition = new Vector3(), velocity = new Vector3();
+const direction = new Vector3(), cameraGoal = new Vector3(), lookGoal = new Vector3(), lookAt = new Vector3();
+const orientation = new Quaternion(), flightEuler = new Euler(0, 0, 0, 'YXZ');
+const hint = message => { $('hint').textContent = message; };
 $('retry').onclick = () => location.reload();
-let rotation = 0, selectedLevel = 0;
 try {
-  const savedRotation = Number(localStorage.getItem('stubenflieger.rotation'));
-  if ([0, 90, 180, 270].includes(savedRotation)) rotation = savedRotation;
-  selectedLevel = clamp(Number(localStorage.getItem('stubenflieger.level')) || 0, 0, LEVELS.length - 1);
+  const saved = Number(localStorage.getItem('stubenflieger.rotation'));
+  if ([0, 90, 180, 270].includes(saved)) rotation = saved;
 } catch {}
 const viewport = () => rotation % 180 ? { width: innerHeight, height: innerWidth } : { width: innerWidth, height: innerHeight };
 function layout() {
@@ -32,15 +50,44 @@ $('rotate-view').onclick = () => {
 };
 window.addEventListener('resize', layout);
 layout();
-const leaderboard = createLeaderboard();
-let physics, view, level;
-let state = 'ready', paused = false, charging = false, power = 0, chargeStart = 0, dragPower = 0, launchTurn = 0;
-let heading = 0, speed = 0, verticalSpeed = 0, flightTime = 0, clock = 0, endingAt = 0, endReason = '', won = false, blocks = 0, stars = 0;
-let chargePointer = null, stickPointer = null, chargeOrigin = { x: 0, y: 0 }, touch = { steer: 0, pitch: 0 }, input = { steer: 0, pitch: 0 };
-let sensorEnabled = false, sensor = null, calibration = null, sensorAt = 0, sensorTimeout, inThermal = false, nearCeiling = false;
-let sound = false, audio, lastBlockSound = -10;
-const keys = new Set(), position = new Vector3(), direction = new Vector3(), cameraGoal = new Vector3(), lookGoal = new Vector3(), lookAt = new Vector3();
-const hint = message => { $('hint').textContent = message; };
+
+function reportStorage(message) {
+  storageError = message;
+  $('storage-status').textContent = message;
+  $('result-storage').textContent = message;
+}
+function recoverRun() {
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(PENDING_KEY) || 'null');
+    if (pending?.id && pending.summary) {
+      progression.creditRun(pending.id, pending.summary);
+      sessionStorage.removeItem(PENDING_KEY);
+    }
+  } catch (error) { reportStorage(error.message || 'Der letzte Run konnte noch nicht gespeichert werden.'); }
+}
+recoverRun();
+if (!progression.getStatus().available) reportStorage(progression.getStatus().error);
+function snapshotRun() {
+  if (!launched || settled || !run) return;
+  try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: run.id, summary: run.summary(flightTime), savedAt: Date.now() })); }
+  catch { reportStorage('Der laufende Run kann bei einem Neuladen verloren gehen. Website-Daten sind nicht verfügbar.'); }
+}
+function settleRun() {
+  if (!launched || settled || !run) return null;
+  const summary = run.summary(flightTime);
+  snapshotRun();
+  try {
+    const reward = progression.creditRun(run.id, summary);
+    settled = true;
+    try { sessionStorage.removeItem(PENDING_KEY); } catch {}
+    reportStorage('');
+    updateProfileLabels();
+    return reward;
+  } catch (error) { reportStorage(error.message); return null; }
+}
+window.addEventListener('pagehide', snapshotRun);
+document.addEventListener('visibilitychange', () => { if (document.hidden) snapshotRun(); });
+
 function tone(frequency, duration = .12, type = 'sine', volume = .06) {
   if (!sound) return;
   try {
@@ -57,103 +104,80 @@ function tone(frequency, duration = .12, type = 'sine', volume = .06) {
   } catch {}
 }
 $('sound').onclick = () => {
-  sound = !sound;
-  $('sound').textContent = sound ? '♪ AN' : '♪ AUS';
-  $('sound').setAttribute('aria-label', sound ? 'Ton ausschalten' : 'Ton einschalten');
-  tone(600);
+  sound = !sound; $('sound').textContent = sound ? '♪ AN' : '♪ AUS';
+  $('sound').setAttribute('aria-label', sound ? 'Ton ausschalten' : 'Ton einschalten'); tone(600);
 };
 function releaseInputs() {
   keyboard?.clear(); cancelCharge(); releaseStick(); keys.clear();
   touch = { steer: 0, pitch: 0 }; input = { steer: 0, pitch: 0 };
-  $('stick').style.transform = 'translate(0,0)';
 }
-function updateLevelLabels() {
-  const number = String(level.id).padStart(2, '0');
-  $('level-name').textContent = `${number} / ${level.name.toUpperCase()}`;
-  $('level-tagline').innerHTML = level.rooms.length === 1 ? 'Kleine Flügel.<br>Großes Chaos.' : `${level.rooms.length} Räume.<br>Ein großer Flug.`;
-  $('mission-copy').textContent = `Sammle alle ${level.collectibles.length} Flugsterne und wirf ${level.goalBlocks} Holzklötze um. ${level.rooms.length === 1 ? 'Übe im Wohnzimmer.' : 'Fliege durch die offenen Türen in die nächsten Räume.'} Türkise Aufwinde helfen dir. Raumhöhe: ${(level.ceiling * METERS_PER_UNIT).toFixed(1)} m.`;
-  $('block-goal').textContent = ' / ' + level.goalBlocks;
-  $('star-goal').textContent = ' / ' + level.collectibles.length;
-  $('height-limit').textContent = `HÖHE · MAX. ${(level.ceiling * METERS_PER_UNIT).toFixed(1)} m`;
-  $('flight-level').textContent = `LEVEL ${level.id} · ${level.rooms.length} ${level.rooms.length === 1 ? 'RAUM' : 'RÄUME'}`;
-  $('level-select').value = String(selectedLevel);
+function updateProfileLabels() {
+  const profile = progression.getProfile();
+  $('wallet').textContent = profile.points.toLocaleString('de-DE') + ' P';
+  $('aircraft-summary').textContent = `${nameOf('plane:' + profile.equipped.form)} · ${Math.round(profile.equipped.size * 100)} % Größe · ${profile.equipped.boosts.length}/2 Boosts`;
+}
+function applyDoor(id, open) { physics.setDoorOpen(id, open); view.setDoorOpen(id, open); }
+function prepareRun() {
+  try { progression.refresh(); } catch (error) { reportStorage(error.message); }
+  const profile = progression.getProfile();
+  run = createRunState(HOUSE, profile); equipped = profile.equipped;
+  tuning = flightTuning(equipped.form, equipped.size);
+  physics.configureAircraft(equipped.form, equipped.size); physics.reset();
+  view.setAircraft(equipped.form, equipped.size, equipped.effect);
+  view.resetCollectibles();
+  for (const door of HOUSE.doors) applyDoor(door.id, run.opened.has(door.id));
+  settled = launched = false; liftUntil = turboUntil = magnetUntil = recoveryUntil = 0; cushion = false;
+  heading = HOUSE.start.heading || 0; speed = verticalSpeed = flightTime = power = dragPower = launchTurn = 0;
+  view.plane.position.copy(physics.plane.position); view.plane.quaternion.copy(physics.plane.quaternion);
+  view.resetTrail(view.plane.position); view.updateSling(0);
+  updateProfileLabels(); updateBoosts(); updateHUD();
 }
 function reset() {
-  state = 'ready'; paused = false; power = dragPower = launchTurn = heading = flightTime = blocks = stars = 0;
-  won = inThermal = nearCeiling = false;
-  releaseInputs(); physics.reset(); view.resetCollectibles();
-  view.plane.rotation.set(0, 0, 0); view.plane.position.copy(physics.plane.position);
-  view.resetTrail(view.plane.position); view.updateSling(0); view.updateCeiling(view.plane.position);
-  $('power-fill').style.transform = 'scaleX(0)';
-  $('launch-label').textContent = 'Ziehen & loslassen'; $('power-label').textContent = 'GUMMISCHLEUDER ↗';
-  $('ceiling-warning').hidden = true;
-  for (const id of ['result', 'paused', 'stats', 'flight-controls', 'pause', 'wind-toast', 'menu', 'leaderboard']) show(id, false);
+  if (launched && !settled && !settleRun()) {
+    hint('Bitte erlaube Website-Daten, damit deine Punkte vor dem Neustart gespeichert werden können.');
+    if (state === 'flying') finish('Run beendet.');
+    else if (state !== 'result') result();
+    return;
+  }
+  state = 'ready'; paused = false; won = inThermal = nearCeiling = false;
+  releaseInputs(); prepareRun();
+  for (const id of ['stats', 'flight-controls', 'pause', 'wind-toast', 'door-progress', 'ceiling-warning']) show(id, false);
   for (const id of ['launch-panel', 'level-label', 'footer']) show(id, true);
   document.body.classList.remove('flying');
-  $('height').classList.remove('danger');
-  updateLevelLabels(); updateHUD();
-  hint('Dein Zuhause. Deine Flugbahn. Sammle die goldenen Sterne.');
+  $('mission-copy').textContent = `Sammle ${HOUSE.collectibles.length} Sterne im ganzen Haus. Sterne öffnen Türen, neue Räume bringen je ${ROOM_BONUS} Punkte. Aufwinde verbinden die Stockwerke.`;
+  $('star-goal').textContent = ' / ' + HOUSE.collectibles.length;
+  hint('Sterne öffnen Türen. Auch unter Tischen und Stühlen warten welche.');
   if (sensorEnabled && sensor) calibration = { ...sensor };
-  dialogs.close($('launch'));
+  followCamera(true); dialogs.close($('launch'));
 }
-function loadLevel(index) {
-  selectedLevel = clamp(index, 0, LEVELS.length - 1);
-  level = getLevel(selectedLevel);
-  view?.dispose();
-  physics = createPhysics(level);
-  view = createScene($('game'), physics, viewport);
-  physics.plane.addEventListener('collide', event => {
-    if (state !== 'flying') return;
-    if (event.body.kind === 'solid' || event.body.kind === 'ceiling') {
-      finish(event.body.kind === 'ceiling' ? 'Die Decke war zu nah. Achte auf die roten Streifen.' : 'Ein Möbelstück oder eine Wand war im Weg.');
-    } else if (event.body.kind === 'block' && clock - lastBlockSound > .08) {
-      lastBlockSound = clock; speed = Math.max(3.8, speed * .97);
-      tone(170, .09, 'triangle', .1); hint('Volltreffer! Die Klötze fallen.');
-    }
-  });
-  view.camera.position.set(10, 13, 22); lookAt.set(-1, 1.8, -3);
-  try { localStorage.setItem('stubenflieger.level', String(selectedLevel)); } catch {}
-  reset();
-}
-for (const [index, item] of LEVELS.entries()) {
-  const option = document.createElement('option'); option.value = String(index);
-  option.textContent = `${item.id} · ${item.name} · ${item.rooms.length} ${item.rooms.length === 1 ? 'Raum' : 'Räume'}`;
-  $('level-select').append(option);
-}
-$('next-level').onclick = () => loadLevel(selectedLevel + 1);
-$('reset').onclick = reset; $('again').onclick = reset;
-$('menu-restart').onclick = () => loadLevel(Number($('level-select').value));
+$('reset').onclick = reset; $('again').onclick = reset; $('menu-restart').onclick = reset;
 function beginCharge() {
   if (state !== 'ready' || paused || charging || dialogs.current()) return false;
-  charging = true; chargeStart = performance.now(); dragPower = 0; power = .12; tone(160, .07);
-  return true;
+  charging = true; chargeStart = performance.now(); dragPower = 0; power = .12; tone(160, .07); return true;
 }
 function cancelCharge() {
   if (chargePointer !== null && $('launch').hasPointerCapture(chargePointer)) $('launch').releasePointerCapture(chargePointer);
   chargePointer = null; charging = false; power = dragPower = 0;
-  view?.updateSling(0);
-  $('power-fill').style.transform = 'scaleX(0)';
+  view?.updateSling(0); $('power-fill').style.transform = 'scaleX(0)';
   $('launch-label').textContent = 'Ziehen & loslassen'; $('power-label').textContent = 'GUMMISCHLEUDER ↗';
 }
-function quickLaunch() {
-  if (beginCharge()) { power = .75; launch(); }
-}
+function quickLaunch() { if (beginCharge()) { power = .75; launch(); } }
 function launch() {
   if (!charging || state !== 'ready' || dialogs.current()) return;
-  charging = false; state = 'flying';
-  leaderboard.beginRun(level.id);
-  flightTime = 0; heading = launchTurn; speed = 5.5 + power * 5.5; verticalSpeed = .8 + power * .7;
-  const start = level.start;
-  physics.plane.position.set(start.x, start.y, start.z + power * 1.8);
-  physics.plane.velocity.setZero(); physics.plane.collisionFilterMask = -1; physics.plane.wakeUp();
+  charging = false; state = 'flying'; launched = true; leaderboard.beginRun();
+  flightTime = 0; heading = (HOUSE.start.heading || 0) + launchTurn;
+  speed = tuning.speed * (.75 + power * .35); verticalSpeed = .08 + power * .1;
+  physics.plane.velocity.setZero(); physics.plane.collisionFilterMask = -1;
+  flightEuler.set(0, -heading, 0, 'YXZ'); orientation.setFromEuler(flightEuler);
+  physics.plane.quaternion.copy(orientation);
   view.resetTrail(new Vector3().copy(physics.plane.position)); view.updateSling(0);
   if (sensorEnabled && sensor) calibration = { ...sensor };
   for (const id of ['launch-panel', 'level-label', 'footer']) show(id, false);
-  for (const id of ['stats', 'flight-controls', 'pause']) show(id, true);
-  document.body.classList.add('flying'); hint('Gold sammeln. Türkis gibt Aufwind. Rot warnt vor der Decke.');
-  tone(480, .4, 'triangle', .12);
-  $('game').focus({ preventScroll: true });
+  for (const id of ['stats', 'flight-controls', 'pause', 'door-progress']) show(id, true);
+  document.body.classList.add('flying'); hint('Sterne sammeln, Türen öffnen. Im türkisen Aufwind steigen.');
+  snapshotRun(); tone(480, .4, 'triangle', .12); $('game').focus({ preventScroll: true });
 }
+
 function rotateInput(x, y) {
   const angle = rotation * Math.PI / 180;
   return { x: x * Math.cos(angle) + y * Math.sin(angle), y: -x * Math.sin(angle) + y * Math.cos(angle) };
@@ -224,148 +248,221 @@ function releaseStick() {
   stickPointer = null; touch = { steer: 0, pitch: 0 }; $('stick').style.transform = 'translate(0,0)';
 }
 $('joystick').addEventListener('pointerup', releaseStick); $('joystick').addEventListener('pointercancel', releaseStick);
+
+
 function pause(value = !paused) {
   if (state !== 'flying') return;
   paused = value; keyboard?.clear(); releaseStick();
-  if (paused) dialogs.open('paused', $('resume')); else dialogs.close($('game'));
+  if (paused) { snapshotRun(); dialogs.open('paused', $('resume')); } else dialogs.close($('game'));
 }
 $('pause').onclick = () => pause(); $('resume').onclick = () => pause(false);
+$('pause-finish').onclick = () => { dialogs.close(); paused = false; finish('Run abgeschlossen. Deine Punkte kommen ins Guthaben.'); };
 function suspend() {
-  releaseStick();
+  releaseStick(); snapshotRun();
   if (state === 'flying') { paused = true; if (!dialogs.current()) dialogs.open('paused', $('resume')); }
 }
 function finish(reason, success = false) {
   if (state !== 'flying') return;
-  keyboard?.clear(); releaseStick();
-  state = 'ending'; endReason = reason; won = success; endingAt = clock;
-  show('wind-toast', false); show('flight-controls', false); show('pause', false);
-  $('game').focus({ preventScroll: true });
+  keyboard?.clear(); releaseStick(); state = 'ending'; paused = false;
+  endReason = reason; won = success; endingAt = clock;
+  show('wind-toast', false); show('flight-controls', false); show('pause', false); show('ceiling-warning', false);
+  physics.plane.velocity.setZero(); settleRun();
   tone(success ? 740 : 120, .5, success ? 'sine' : 'triangle', .1);
-  if (success) { physics.plane.velocity.setZero(); physics.plane.collisionFilterMask = 0; }
 }
 function result() {
-  state = 'result'; blocks = physics.countFallen();
-  $('result-eyebrow').textContent = won ? 'LEVEL GESCHAFFT' : 'FLUG BEENDET';
+  state = 'result';
+  const summary = run.summary(flightTime), score = calculateRunScore(summary);
+  $('result-eyebrow').textContent = won ? 'DAS GANZE HAUS GESCHAFFT' : 'RUN ABGESCHLOSSEN';
   $('result-title').textContent = won ? 'Alle Sterne an Bord.' : 'Noch eine Runde?';
-  $('result-copy').textContent = won ? (selectedLevel < LEVELS.length - 1 ? 'Im nächsten Level warten mehr Räume, mehr Sterne und mehr Holztürme.' : 'Das ganze Haus gehört dir! Spiele deine Lieblingslevel noch einmal.') : `${endReason} Ziel: ${level.collectibles.length} Sterne und ${level.goalBlocks} Klötze.`;
-  $('result-time').textContent = flightTime.toFixed(1) + ' s'; $('result-blocks').textContent = blocks;
-  $('result-stars').textContent = `${stars} / ${level.collectibles.length}`;
-  show('next-level', won && selectedLevel < LEVELS.length - 1);
-  $('again').textContent = 'Dieses Level noch einmal ↗';
-  leaderboard.setResult(blocks, stars, flightTime, level.id);
-  keyboard?.clear(); dialogs.open('result', $(won && selectedLevel < LEVELS.length - 1 ? 'next-level' : 'again'));
+  $('result-copy').textContent = endReason;
+  $('result-time').textContent = flightTime.toFixed(1) + ' s'; $('result-rooms').textContent = summary.roomIds.length;
+  $('result-stars').textContent = `${run.stars.size} / ${HOUSE.collectibles.length}`;
+  $('result-reward').textContent = `+${score.toLocaleString('de-DE')} Punkte · davon ${summary.roomIds.length * ROOM_BONUS} Raumbonus${settled ? ' · gespeichert' : ' · noch nicht gespeichert'}`;
+  leaderboard.setResult(summary); updateProfileLabels(); keyboard?.clear(); dialogs.open('result', $('again'));
 }
-let leaderboardReturn = 'menu', menuReturn = null;
+let leaderboardReturn = 'menu', menuReturn = null, shopReturn = null;
 function openMenu() {
-  menuReturn = dialogs.current(); keyboard?.clear(); releaseStick();
-  $('level-select').value = String(selectedLevel);
+  menuReturn = dialogs.current(); releaseInputs();
   if (state === 'flying') paused = true;
+  $('menu-shop').disabled = state === 'flying' || state === 'ending';
+  $('menu-shop').textContent = state === 'flying' ? 'Shop nach dem Run verfügbar' : 'Shop & Flugzeug';
   dialogs.open('menu', $('close-menu'));
 }
 function closeMenu() {
   if (state === 'flying' && paused) dialogs.open('paused', $('resume'));
-  else if (menuReturn === 'result') dialogs.open('result', $('result-menu'));
+  else if (state === 'result') dialogs.open('result', $('result-menu'));
   else dialogs.close($('menu-button'));
 }
 function openLeaderboard(source) {
-  leaderboardReturn = source; keyboard?.clear(); releaseStick();
+  leaderboardReturn = source; releaseInputs();
   if (state === 'flying') paused = true;
   dialogs.open('leaderboard', $('close-leaderboard')); void leaderboard.refresh();
 }
 function closeLeaderboard() {
   if (leaderboardReturn === 'menu') dialogs.open('menu', $('menu-leaderboard'));
-  else if (leaderboardReturn === 'result') dialogs.open('result', $('result-leaderboard'));
+  else if (state === 'result') dialogs.open('result', $('result-leaderboard'));
   else if (state === 'flying' && paused) dialogs.open('paused', $('resume'));
-  else dialogs.close($(state === 'ready' ? 'launch' : 'game'));
+  else dialogs.close($('launch'));
 }
+function openShop() {
+  if (!['ready', 'result'].includes(state)) { hint('Den Shop kannst du vor oder nach deinem Run öffnen.'); return; }
+  if (launched && !settled && !settleRun()) return;
+  shopReturn = dialogs.current(); releaseInputs(); shop.render(); dialogs.open('shop', $('close-shop'));
+}
+function closeShop() {
+  if (state === 'ready') { prepareRun(); followCamera(true); }
+  if (shopReturn === 'menu') dialogs.open('menu', $('menu-shop'));
+  else if (state === 'result') dialogs.open('result', $('result-shop'));
+  else dialogs.close($('start-shop'));
+}
+shop = createShop({ container: $('shop-content'), progression, onChange: updateProfileLabels, onClose: closeShop });
+$('start-shop').onclick = openShop; $('result-shop').onclick = openShop; $('menu-shop').onclick = openShop; $('close-shop').onclick = closeShop;
 $('menu-button').onclick = openMenu; $('close-menu').onclick = closeMenu;
 $('menu-leaderboard').onclick = () => openLeaderboard('menu'); $('result-leaderboard').onclick = () => openLeaderboard('result');
-$('close-leaderboard').onclick = closeLeaderboard;
-$('pause-menu').onclick = openMenu; $('result-menu').onclick = openMenu;
+$('close-leaderboard').onclick = closeLeaderboard; $('pause-menu').onclick = openMenu; $('result-menu').onclick = openMenu;
 keyboard = createKeyboardControls({ window, document, keys, getState: () => state, getDialog: () => dialogs.current(), launcher: $('launch'), actions: {
   beginCharge, cancelCharge, release: launch, quickLaunch, reset, pause: () => pause(), suspend,
-  menu: openMenu, closeMenu, closeBoard: closeLeaderboard,
-  board: () => { if (dialogs.current() !== 'leaderboard') openLeaderboard(dialogs.current()); }, sound: () => $('sound').click()
+  menu: openMenu, closeMenu, closeBoard: closeLeaderboard, shop: openShop, closeShop, boost: useBoost,
+  board: () => { if (dialogs.current() !== 'leaderboard') openLeaderboard(dialogs.current()); }, sound: () => $('sound').click(),
 } });
+function updateBoosts() {
+  $('boost-controls').replaceChildren();
+  run.charges.forEach((boost, index) => {
+    const button = document.createElement('button'); button.type = 'button';
+    button.textContent = `${index + 1} · ${nameOf('boost:' + boost)}${run.used.has(boost) ? ' ✓' : ''}`;
+    button.disabled = run.used.has(boost); button.onclick = () => useBoost(index);
+    button.setAttribute('aria-label', `${nameOf('boost:' + boost)}${run.used.has(boost) ? ', verbraucht' : ', einmal in diesem Run'}`);
+    $('boost-controls').append(button);
+  });
+}
+function useBoost(index) {
+  if (state !== 'flying' || paused || dialogs.current()) return;
+  const boost = run.useBoost(index); if (!boost) return;
+  if (boost === 'lift') liftUntil = clock + 1.25;
+  if (boost === 'turbo') turboUntil = clock + 3;
+  if (boost === 'magnet') magnetUntil = clock + 6;
+  if (boost === 'cushion') cushion = true;
+  updateBoosts(); tone(740, .2); hint(nameOf('boost:' + boost) + ' aktiviert.');
+  $('game').focus({ preventScroll: true });
+}
 function updateHUD() {
-  $('time').textContent = flightTime.toFixed(1) + ' s';
-  $('height').textContent = (clamp(physics.plane.position.y, 0, level.ceiling) * METERS_PER_UNIT).toFixed(1) + ' m';
-  $('fallen').textContent = blocks; $('stars').textContent = stars;
+  if (!run || !physics) return;
+  const room = getRoomAt(physics.plane.position), summary = run.summary(flightTime), nextDoor = run.nextDoor();
+  $('time').textContent = flightTime.toFixed(1) + ' s'; $('height').textContent = physics.plane.position.y.toFixed(1) + ' m';
+  $('rooms').textContent = run.visited.size + ' / ' + totalRooms; $('stars').textContent = run.stars.size;
+  $('run-points').textContent = calculateRunScore(summary).toLocaleString('de-DE');
+  $('flight-level').textContent = (room?.name || 'Über dem Garten').toUpperCase();
+  const missing = nextDoor ? Math.max(0, nextDoor.threshold - run.stars.size) : 0;
+  $('door-progress').textContent = nextDoor ? `${nextDoor.name}: noch ${missing} ${missing === 1 ? 'Stern' : 'Sterne'}` : 'Alle Türen offen · finde die übrigen Sterne';
   $('height').classList.toggle('danger', nearCeiling);
   show('ceiling-warning', nearCeiling && state === 'flying');
 }
-let previousFrame = performance.now(), hudTime = 0;
+function followCamera(immediate = false, dt = .016) {
+  position.copy(physics.plane.position); direction.set(Math.sin(heading), 0, -Math.cos(heading));
+  cameraGoal.copy(position).addScaledVector(direction, state === 'ready' ? -.42 : -1.45);
+  if (state === 'ready') cameraGoal.x -= 1.25;
+  cameraGoal.y += state === 'ready' ? .95 : .62;
+  cameraGoal.copy(physics.traceCamera(position, cameraGoal, .12));
+  if (immediate) view.camera.position.copy(cameraGoal);
+  else {
+    view.camera.position.lerp(cameraGoal, 1 - Math.exp(-dt * 9));
+    view.camera.position.copy(physics.traceCamera(position, view.camera.position, .1));
+  }
+  lookGoal.copy(position).addScaledVector(direction, state === 'ready' ? .25 : 1.3); lookGoal.y += .08;
+  if (immediate) lookAt.copy(lookGoal); else lookAt.lerp(lookGoal, 1 - Math.exp(-dt * 9));
+  view.camera.lookAt(lookAt);
+}
+function readFlightInput(now, dt) {
+  let steer = 0, pitch = 0;
+  if (sensorEnabled && sensor && calibration && now - sensorAt < 1500) {
+    const difference = (a, b) => (a - b + 540) % 360 - 180;
+    steer = clamp(difference(sensor.roll, calibration.roll) / 28, -1, 1);
+    pitch = clamp(difference(sensor.pitch, calibration.pitch) / 28, -1, 1);
+    if (Math.abs(steer) < .06) steer = 0; if (Math.abs(pitch) < .06) pitch = 0;
+  }
+  if (stickPointer !== null) ({ steer, pitch } = touch);
+  if (keys.has('ArrowLeft') || keys.has('KeyA')) steer = -1;
+  if (keys.has('ArrowRight') || keys.has('KeyD')) steer = 1;
+  if (keys.has('ArrowUp') || keys.has('KeyW')) pitch = 1;
+  if (keys.has('ArrowDown') || keys.has('KeyS')) pitch = -1;
+  input.steer = MathUtils.damp(input.steer, steer, 9, dt); input.pitch = MathUtils.damp(input.pitch, pitch, 7, dt);
+}
+let previousFrame = performance.now(), hudTime = 0, saveTime = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min((now - previousFrame) / 1000, .04); previousFrame = now;
+  const dt = Math.min(Math.max(0, (now - previousFrame) / 1000), .04); previousFrame = now;
   if (!view) return;
-  if (paused || dialogs.current()) { view.renderer.render(view.scene, view.camera); return; }
-  clock += dt; view.wind(clock);
+  if (paused || dialogs.current()) { view.render(); return; }
+  clock += dt;
   if (state === 'ready') {
-    const aimDirection = Number(keys.has('ArrowRight') || keys.has('KeyD')) - Number(keys.has('ArrowLeft') || keys.has('KeyA'));
-    launchTurn = clamp(launchTurn + aimDirection * .6 * dt, -.45, .45);
+    const aim = Number(keys.has('ArrowRight') || keys.has('KeyD')) - Number(keys.has('ArrowLeft') || keys.has('KeyA'));
+    launchTurn = clamp(launchTurn + aim * .8 * dt, -.7, .7);
+    heading = (HOUSE.start.heading || 0) + launchTurn;
     if (charging) {
       power = Math.max(.12, dragPower, clamp((now - chargeStart) / 1400, 0, 1));
-      $('power-fill').style.transform = `scaleX(${power})`; $('launch-label').textContent = Math.round(power * 100) + ' % gespannt'; $('power-label').textContent = 'LOSLASSEN ↗'; view.updateSling(power);
+      $('power-fill').style.transform = `scaleX(${power})`; $('launch-label').textContent = Math.round(power * 100) + ' % gespannt';
+      $('power-label').textContent = 'LOSLASSEN ↗'; view.updateSling(power);
     }
-    physics.plane.position.set(level.start.x, level.start.y, level.start.z + power * 1.8); physics.plane.velocity.setZero();
-    view.plane.position.copy(physics.plane.position); view.plane.rotation.set(.03, -launchTurn, 0);
-    const size = viewport(), portrait = size.height > size.width;
-    cameraGoal.set(portrait ? 9 : 10, portrait ? 16 : 13, portrait ? 25 : 22); lookGoal.set(portrait ? 0 : -1, portrait ? 1 : 1.8, portrait ? 11 : -3);
+    view.plane.rotation.set(0, -heading, 0, 'YXZ');
   }
   if (state === 'flying') {
-    flightTime += dt;
-    let steer = 0, pitch = 0;
-    if (sensorEnabled && sensor && calibration && now - sensorAt < 1500) {
-      const angleDifference = (a, b) => (a - b + 540) % 360 - 180;
-      steer = clamp(angleDifference(sensor.roll, calibration.roll) / 28, -1, 1); pitch = clamp(angleDifference(sensor.pitch, calibration.pitch) / 28, -1, 1);
-      if (Math.abs(steer) < .06) steer = 0; if (Math.abs(pitch) < .06) pitch = 0;
+    flightTime += dt; readFlightInput(now, dt);
+    heading += input.steer * tuning.turnRate * dt;
+    position.copy(physics.plane.position); previousPosition.copy(position);
+    const thermal = HOUSE.thermals.find(item => Math.hypot(position.x - item.x, position.z - item.z) < item.r && position.y >= item.y && position.y < item.y + item.height);
+    show('wind-toast', Boolean(thermal));
+    if (thermal && !inThermal) tone(800, .3, 'sine', .04);
+    inThermal = Boolean(thermal);
+    const cruising = tuning.speed * (clock < turboUntil ? 1.65 : 1);
+    speed = MathUtils.damp(speed, cruising, .75, dt);
+    const { ride, x, z, targetVertical } = flightForces({ position, input, heading, speed, tuning, thermal, lift: clock < liftUntil });
+    verticalSpeed = MathUtils.damp(verticalSpeed, targetVertical, 4, dt);
+    velocity.set(x, verticalSpeed, z);
+    flightEuler.set(Math.atan2(verticalSpeed, ride ? Math.max(2, speed) : speed) * .7, -heading, -input.steer * .42, 'YXZ');
+    orientation.setFromEuler(flightEuler);
+    // After a cushion contact, retrace a short safe segment before turning around.
+    if (clock < recoveryUntil) {
+      velocity.copy(recoveryVelocity); orientation.copy(recoveryOrientation);
     }
-    if (stickPointer !== null) ({ steer, pitch } = touch);
-    if (keys.has('ArrowLeft') || keys.has('KeyA')) steer = -1;
-    if (keys.has('ArrowRight') || keys.has('KeyD')) steer = 1;
-    if (keys.has('ArrowUp') || keys.has('KeyW')) pitch = 1;
-    if (keys.has('ArrowDown') || keys.has('KeyS')) pitch = -1;
-    input.steer = MathUtils.damp(input.steer, steer, 7, dt); input.pitch = MathUtils.damp(input.pitch, pitch, 6, dt);
-    heading += input.steer * 1.65 * dt;
-    position.copy(physics.plane.position);
-    const thermal = level.thermals.some(item => Math.hypot(position.x - item.x, position.z - item.z) < item.r && position.y < 8.4);
-    show('wind-toast', thermal);
-    if (thermal && !inThermal) tone(800, .4, 'sine', .045); inThermal = thermal;
-    speed = clamp(speed + ((thermal ? .8 : 0) - .12 - Math.max(0, input.pitch) * .55 + Math.max(0, -input.pitch) * .6) * dt, 3.6, 11);
-    const targetVertical = -.55 + input.pitch * 2.25 + (thermal ? 4.1 : 0) - (speed < 4.3 ? .65 : 0);
-    verticalSpeed = MathUtils.damp(verticalSpeed, targetVertical, 2.1, dt);
-    physics.plane.velocity.set(Math.sin(heading) * speed, verticalSpeed, -Math.cos(heading) * speed);
-    physics.plane.force.y = physics.plane.mass * 9.82;
-    view.plane.rotation.set(Math.atan2(verticalSpeed, speed), -heading, -input.steer * .6);
-  }
-  if (state !== 'result' && !(state === 'ending' && won)) physics.world.step(1 / 90, dt, 4);
-  if (physics.enforceCeiling()) finish('Die Decke war zu nah. Achte auf die roten Streifen.');
-  view.sync(); nearCeiling = view.updateCeiling(physics.plane.position);
-  if (state !== 'ready') {
-    view.plane.position.copy(physics.plane.position); position.copy(view.plane.position);
-    direction.set(Math.sin(heading), 0, -Math.cos(heading));
-    cameraGoal.copy(position).addScaledVector(direction, -5.4); cameraGoal.y += 2.55;
-    const bounds = level.bounds;
-    cameraGoal.x = clamp(cameraGoal.x, bounds.minX + .7, bounds.maxX - .7); cameraGoal.z = clamp(cameraGoal.z, bounds.minZ + .7, bounds.maxZ - .7); cameraGoal.y = clamp(cameraGoal.y, 1.1, level.ceiling - .6);
-    lookGoal.copy(position).addScaledVector(direction, 2.8); lookGoal.y += .35;
-    if (state === 'flying') {
-      view.updateTrail(position); blocks = physics.countFallen();
-      const pickups = view.collect(position);
-      if (pickups) { stars += pickups; tone(1100, .12); hint(`Flugstern! ${stars} / ${level.collectibles.length} gesammelt.`); }
-      if (stars >= level.collectibles.length && blocks >= level.goalBlocks) finish('Alle Ziele erreicht.', true);
-      else if (position.y < .22) finish('Der Boden kam näher als geplant.');
+    const contact = physics.advance(dt, velocity, orientation);
+    view.plane.position.copy(physics.plane.position); view.plane.quaternion.copy(physics.plane.quaternion);
+    const pickups = view.collectStars(star => physics.canCollectStar(star, previousPosition, clock < magnetUntil ? .75 : 0));
+    for (const id of pickups) {
+      const opened = run.collect(id);
+      if (!opened) continue;
+      for (const door of opened) applyDoor(door.id, true);
+      tone(1100, .1);
+      hint(opened.length ? opened.map(door => door.name).join(' · ') + ' ist jetzt offen!' : `Stern gesammelt! ${run.stars.size}/${HOUSE.collectibles.length}`);
     }
-    if (state === 'ending') { if (!won) view.plane.rotation.z += dt * 1.2; if (clock - endingAt > 1.3) result(); }
+    const room = getRoomAt(physics.plane.position);
+    if (room && run.enterRoom(room.id)) { hint(`${room.name} entdeckt · +${ROOM_BONUS} Punkte`); tone(880, .2); snapshotRun(); }
+    if (pickups.length) snapshotRun();
+    if (contact.collided) {
+      if (cushion) {
+        cushion = false;
+        recoveryVelocity.copy(velocity).multiplyScalar(-.55); recoveryOrientation.copy(physics.plane.quaternion);
+        recoveryUntil = clock + .6; heading += Math.PI;
+        hint('Luftpolster! Eine Berührung abgefangen.'); tone(260, .18);
+      } else finish(contact.body?.kind === 'floor' ? 'Der Boden kam näher als geplant.' : 'Ein Flügel oder der Rumpf hat ein Hindernis berührt.');
+    }
+    if (run.summary().complete) finish('Alle Sterne gefunden – vom Keller bis in den Garten!', true);
+    const b = HOUSE.bounds, p = physics.plane.position;
+    if (p.x < b.minX || p.x > b.maxX || p.z < b.minZ || p.z > b.maxZ || p.y < b.minY || p.y > b.maxY) finish('Du hast das Grundstück verlassen.');
+    view.updateTrail(physics.plane.position);
+    saveTime += dt; if (saveTime > 1) { saveTime = 0; snapshotRun(); }
   }
-  view.camera.position.lerp(cameraGoal, 1 - Math.exp(-dt * (state === 'ready' ? 2 : 5)));
-  lookAt.lerp(lookGoal, 1 - Math.exp(-dt * 6)); view.camera.lookAt(lookAt);
-  hudTime += dt; if (hudTime > .1) { hudTime = 0; updateHUD(); }
-  view.renderer.render(view.scene, view.camera);
+  if (state === 'ending' && clock - endingAt > .55) result();
+  view.update(dt, clock); nearCeiling = view.updateCeiling(physics.plane.position);
+  followCamera(false, dt); hudTime += dt; if (hudTime > .1) { hudTime = 0; updateHUD(); }
+  view.render();
 }
-try { loadLevel(selectedLevel); show('loading', false); requestAnimationFrame(frame); }
-catch (error) { console.error(error); show('loading', false); dialogs.open('error'); }
+const recoveryVelocity = new Vector3(), recoveryOrientation = new Quaternion();
+try {
+  physics = createPhysics(HOUSE, progression.getProfile().equipped);
+  view = createScene($('game'), physics, viewport);
+  reset(); show('loading', false); requestAnimationFrame(frame);
+} catch (error) { console.error(error); show('loading', false); dialogs.open('error'); }
 $('game').addEventListener('webglcontextlost', event => {
-  event.preventDefault(); keyboard.clear(); releaseStick(); paused = true;
-  $('error-copy').textContent = 'Die 3D-Darstellung wurde unterbrochen. Lade das Spiel neu.'; dialogs.open('error');
+  event.preventDefault(); keyboard.clear(); releaseStick(); snapshotRun(); paused = true;
+  $('error-copy').textContent = 'Die 3D-Darstellung wurde unterbrochen. Dein letzter Punktestand wird beim Neuladen wiederhergestellt.'; dialogs.open('error');
 });

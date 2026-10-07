@@ -8,12 +8,12 @@ async function api(path, options = {}) {
 export function createLeaderboard() {
   let ticket = null, result = null, refreshId = 0;
   try { $('pilot-name').value = localStorage.getItem('stubenflieger.pilot') || ''; } catch {}
-  function beginRun(level) {
-    ticket = api('/api/runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ level }) }).then(data => data.run).catch(() => null);
+  function beginRun() {
+    ticket = api('/api/house-runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(data => data.run).catch(() => null);
     result = null;
   }
-  function setResult(blocks, stars, seconds, level) {
-    result = { blocks, stars, flightMs: Math.round(seconds * 1000), level, ticket, saved: false };
+  function setResult({ blocks, stars, seconds, roomIds, complete }) {
+    result = { blocks, stars, flightMs: Math.floor(seconds * 1000), roomIds: [...roomIds], complete: Boolean(complete), ticket, saved: false };
     $('save-score').disabled = seconds < .5;
     $('save-score').textContent = 'Eintragen'; $('pilot-name').disabled = false;
     $('score-status').textContent = seconds < .5 ? 'Dieser Flug war zu kurz für die Bestenliste.' : 'Trage deinen Flug mit einem frei gewählten Pilotnamen ein.';
@@ -24,19 +24,19 @@ export function createLeaderboard() {
     if (!$('leaderboard').hidden && (focus === $('refresh-leaderboard') || $('ranking-table').contains(focus))) $('close-leaderboard').focus();
     $('leaderboard-status').textContent = 'Bestenliste wird geladen …'; $('ranking-table').hidden = true; $('refresh-leaderboard').disabled = true;
     try {
-      const { entries } = await api('/api/leaderboard');
+      const { entries } = await api('/api/house-leaderboard');
       if (id !== refreshId) return;
       $('ranking-body').replaceChildren();
       entries.forEach((entry, index) => {
         const row = document.createElement('tr');
-        for (const text of [index + 1, entry.name, `L${entry.level || 1} · ${entry.stars || 0} ★ / ${entry.blocks} ▣ / ${(entry.flightMs / 1000).toFixed(1)} s`, entry.points.toLocaleString('de-DE')]) {
+        for (const text of [index + 1, entry.name, `${entry.rooms} Räume · ${entry.stars} ★ · ${(entry.flightMs / 1000).toFixed(1)} s${entry.complete ? ' · Haus geschafft' : ''}`, entry.points.toLocaleString('de-DE')]) {
           const cell = document.createElement('td'); cell.textContent = String(text); row.append(cell);
         }
         $('ranking-body').append(row);
       });
       $('ranking-table').hidden = entries.length === 0;
-      $('leaderboard-status').textContent = entries.length ? 'Die 20 besten Flüge · alle Level' : 'Noch keine Einträge. Fliege die erste Bestmarke!';
-    } catch { $('leaderboard-status').textContent = 'Die Bestenliste konnte nicht geladen werden. Versuche es gleich noch einmal.'; }
+      $('leaderboard-status').textContent = entries.length ? 'Die 20 besten Hausflüge · alle Ausrüstungen' : 'Noch keine Hausflüge eingetragen. Fliege die erste Bestmarke!';
+    } catch { if (id === refreshId) $('leaderboard-status').textContent = 'Die Bestenliste konnte nicht geladen werden. Versuche es gleich noch einmal.'; }
     finally { if (id === refreshId) $('refresh-leaderboard').disabled = false; }
   }
   $('refresh-leaderboard').onclick = () => void refresh();
@@ -49,7 +49,7 @@ export function createLeaderboard() {
     try {
       const run = await active.ticket;
       if (!run) throw new Error('Dieser Flug konnte nicht online gestartet werden. Prüfe deine Verbindung und fliege noch eine Runde.');
-      const data = await api('/api/leaderboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run, name, blocks: active.blocks, stars: active.stars, flightMs: active.flightMs, level: active.level }) });
+      const data = await api('/api/house-leaderboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run, name, blocks: active.blocks, stars: active.stars, flightMs: active.flightMs, roomIds: active.roomIds, complete: active.complete }) });
       if (active !== result) return;
       active.saved = true; $('save-score').textContent = '✓ Gespeichert';
       if (!$('result').hidden && document.activeElement === $('pilot-name')) $('result-leaderboard').focus();

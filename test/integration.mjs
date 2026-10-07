@@ -22,3 +22,16 @@ for (const asset of ['/', '/game.js', '/style.css']) {
   const response = await fetch(origin + asset); assert.equal(response.status, 200);
 }
 console.log('Local Worker/D1 integration passed: 156 blocks, 96 stars, correct points, retry, level binding, origin, assets.');
+const houseStart = await request('/api/house-runs', {});
+assert.equal(houseStart.status, 201);
+const houseScore = { run: houseStart.data.run, name: 'Lokaler Hauspilot', stars: 2, blocks: 0, roomIds: ['dining', 'kitchen'], complete: false, flightMs: 500, points: 999999 };
+const houseSaved = await request('/api/house-leaderboard', houseScore);
+assert.equal(houseSaved.status, 201); assert.equal(houseSaved.data.points, 805);
+assert.equal((await request('/api/house-leaderboard', houseScore)).status, 200);
+assert.equal((await request('/api/house-leaderboard', { ...houseScore, stars: 3 })).status, 409);
+assert.equal((await request('/api/house-leaderboard', { ...houseScore, roomIds: ['unknown'] })).status, 400);
+const houseRanking = await request('/api/house-leaderboard');
+assert.equal(houseRanking.status, 200);
+assert(houseRanking.data.entries.some(item => item.name === houseScore.name && item.rooms === 2 && item.points === 805));
+assert(houseRanking.data.entries.every(item => item.level === undefined));
+console.log('House Worker/D1 integration passed: room bonus, independent ranking, server scoring, duplicate and invalid room handling.');

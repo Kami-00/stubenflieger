@@ -1,4 +1,6 @@
 import { LEVELS, getLevel } from '../src/levels.js';
+import { HOUSE } from '../src/house.js';
+import { calculateRunScore } from '../src/progression.js';
 
 const json = (data, status = 200) => Response.json(data, {
   status,
@@ -31,6 +33,36 @@ export function validateScore(input) {
   return {
     name, run: input.run, blocks: input.blocks, stars, level, flightMs: input.flightMs,
     points: input.blocks * 100 + stars * 150 + Math.floor(input.flightMs / 100),
+  };
+}
+
+export function validateHouseScore(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Ungültiges Ergebnis.');
+  const name = typeof input.name === 'string' ? input.name.trim().replace(/\s+/g, ' ') : '';
+  if (name.length < 2 || name.length > 20 || !/^[\p{L}\p{N} _.'-]+$/u.test(name)) {
+    throw new Error('Nutze 2–20 Buchstaben, Zahlen, Leerzeichen oder . _ - für deinen Namen.');
+  }
+  if (typeof input.run !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(input.run)) {
+    throw new Error('Bitte starte einen neuen Hausflug.');
+  }
+  const roomAliases = new Map(HOUSE.rooms.map(room => [room.id, room.bonusId || room.id]));
+  for (const id of roomAliases.values()) roomAliases.set(id, id);
+  const validRooms = new Set(roomAliases.keys());
+  const maxBlocks = HOUSE.towers.reduce((sum, tower) => sum + tower.layers * 3, 0);
+  if (!Number.isInteger(input.blocks) || input.blocks < 0 || input.blocks > maxBlocks
+    || !Number.isInteger(input.stars) || input.stars < 0 || input.stars > HOUSE.collectibles.length
+    || !Number.isInteger(input.flightMs) || input.flightMs < 500 || input.flightMs > 1_800_000
+    || !Array.isArray(input.roomIds) || input.roomIds.length > validRooms.size
+    || !input.roomIds.every(id => validRooms.has(id)) || new Set(input.roomIds).size !== input.roomIds.length
+    || (input.complete !== undefined && typeof input.complete !== 'boolean')) {
+    throw new Error('Dieses Hausflug-Ergebnis ist nicht gültig.');
+  }
+  if (input.complete === true && input.stars !== HOUSE.collectibles.length) throw new Error('Für einen vollständigen Hausflug fehlen Sterne.');
+  const roomIds = [...new Set(input.roomIds.map(id => roomAliases.get(id)))].filter(id => id !== HOUSE.startRoomId).sort();
+  return {
+    name, run: input.run, blocks: input.blocks, stars: input.stars, flightMs: input.flightMs,
+    roomIds, rooms: roomIds.length, complete: input.complete === true,
+    points: calculateRunScore({ ...input, seconds: input.flightMs / 1000, roomIds }),
   };
 }
 
@@ -73,9 +105,27 @@ async function readRun(db, id) {
     FROM flights_v2 WHERE id = ?`).bind(id).first();
 }
 
+async function readHouseRun(db, id) {
+  return db.prepare(`SELECT started_at, name, blocks, stars, room_ids AS roomIds, complete, flight_ms AS flightMs
+    FROM house_runs WHERE id = ?`).bind(id).first();
+}
+
+function sameHouseResult(run, result) {
+  return run.name === result.name && run.blocks === result.blocks && run.stars === result.stars
+    && run.roomIds === JSON.stringify(result.roomIds) && Boolean(run.complete) === result.complete && run.flightMs === result.flightMs;
+}
+
 async function handle(request, env) {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+  if (request.method === 'GET' && url.pathname === '/api/house-leaderboard') {
+    const { results } = await env.DB.prepare(`
+      SELECT name, blocks, stars, rooms, complete, flight_ms AS flightMs, points
+      FROM house_runs WHERE name IS NOT NULL
+      ORDER BY points DESC, stars DESC, rooms DESC, flight_ms ASC, started_at ASC LIMIT 20
+    `).all();
+    return json({ entries: results });
+  }
   if (request.method === 'GET' && url.pathname === '/api/leaderboard') {
     const { results } = await env.DB.prepare(`
       SELECT name, blocks, stars, level, flightMs, points FROM (
@@ -91,6 +141,42 @@ async function handle(request, env) {
   if (request.method !== 'POST') return json({ error: 'Nicht gefunden.' }, 404);
   if (request.headers.get('origin') !== url.origin) return json({ error: 'Bitte direkt im Spiel absenden.' }, 403);
   const now = Date.now();
+  if (url.pathname === '/api/house-runs') {
+    if (request.body) {
+      try {
+        const input = await readJson(request);
+        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Ungültiger Flugstart.');
+      } catch (error) { return json({ error: error.message }, 400); }
+    }
+    const id = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM house_runs WHERE name IS NULL AND started_at < ?').bind(now - 86_400_000),
+      env.DB.prepare('INSERT INTO house_runs (id, started_at) VALUES (?, ?)').bind(id, now),
+    ]);
+    return json({ run: id }, 201);
+  }
+  if (url.pathname === '/api/house-leaderboard') {
+    let result;
+    try { result = validateHouseScore(await readJson(request)); }
+    catch (error) { return json({ error: error.message }, 400); }
+    const run = await readHouseRun(env.DB, result.run);
+    if (!run || now - run.started_at > 86_400_000) return json({ error: 'Dieser Flug ist abgelaufen. Bitte fliege noch eine Runde.' }, 400);
+    if (run.name !== null) {
+      if (sameHouseResult(run, result)) return json({ saved: true, points: result.points });
+      return json({ error: 'Dieser Flug wurde bereits eingetragen.' }, 409);
+    }
+    if (result.flightMs > now - run.started_at + 2000) return json({ error: 'Die Flugzeit passt nicht zu diesem Flug.' }, 400);
+    const update = await env.DB.prepare(`
+      UPDATE house_runs SET name = ?, blocks = ?, stars = ?, rooms = ?, room_ids = ?, complete = ?, flight_ms = ?, points = ?, submitted_at = ?
+      WHERE id = ? AND name IS NULL
+    `).bind(result.name, result.blocks, result.stars, result.rooms, JSON.stringify(result.roomIds), Number(result.complete), result.flightMs, result.points, now, result.run).run();
+    if (!update.meta.changes) {
+      const saved = await readHouseRun(env.DB, result.run);
+      if (saved && sameHouseResult(saved, result)) return json({ saved: true, points: result.points });
+      return json({ error: 'Dieser Flug wurde bereits eingetragen.' }, 409);
+    }
+    return json({ saved: true, points: result.points }, 201);
+  }
   if (url.pathname === '/api/runs') {
     let level = 1;
     if (request.body) {

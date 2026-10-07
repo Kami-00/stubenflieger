@@ -1,226 +1,192 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  LEVELS, getLevel, getWalls, METERS_PER_UNIT, PLANE_RADIUS,
-  ROOM_WIDTH, ROOM_DEPTH, DOOR_WIDTH, DOOR_HEIGHT,
-} from '../src/levels.js';
-import { createPhysics } from '../src/physics.js';
+import { Quaternion, Vec3 } from 'cannon-es';
+import { createPhysics, STAR_COLLECTION_RADIUS } from '../src/physics.js';
+import { HOUSE, getDoorPose } from '../src/house.js';
 
-const roomKey = room => `${room.x},${room.z}`;
-const neighbours = (a, b) =>
-  (a.z === b.z && Math.abs(a.x - b.x) === ROOM_WIDTH) ||
-  (a.x === b.x && Math.abs(a.z - b.z) === ROOM_DEPTH);
-const containsPoint = (wall, point) => wall.size.every((size, axis) =>
-  Math.abs(point[axis] - wall.position[axis]) < size / 2 - 1e-8);
-const roomContains = (room, point, margin = 0) =>
-  Math.abs(point.x - room.x) < ROOM_WIDTH / 2 - margin &&
-  Math.abs(point.z - room.z) < ROOM_DEPTH / 2 - margin;
+const box = (id, size, position, kind = 'furniture', rotation = [0, 0, 0]) => ({ id, size, position, kind, rotation });
+const fixture = (obstacles = [], doors = [], start = [0, 1, 2]) => ({ obstacles, doors, start });
+const fly = (physics, dt = 1, velocity = [0, 0, -4], quaternion = physics.plane.quaternion) => physics.advance(dt, new Vec3(...velocity), quaternion);
 
-// Measure the union of the playable floor rectangles, including L-shaped levels.
-// A bounding box alone would include inaccessible space outside the house.
-function floorArea(rooms) {
-  const xs = [...new Set(rooms.flatMap(room => [room.x - ROOM_WIDTH / 2, room.x + ROOM_WIDTH / 2]))].sort((a, b) => a - b);
-  let area = 0;
-  for (let index = 1; index < xs.length; index++) {
-    const midpoint = (xs[index - 1] + xs[index]) / 2;
-    const intervals = rooms.filter(room => Math.abs(room.x - midpoint) < ROOM_WIDTH / 2)
-      .map(room => [room.z - ROOM_DEPTH / 2, room.z + ROOM_DEPTH / 2]).sort((a, b) => a[0] - b[0]);
-    let covered = 0, end = -Infinity;
-    for (const [low, high] of intervals) {
-      covered += Math.max(0, high - Math.max(low, end));
-      end = Math.max(end, high);
-    }
-    area += (xs[index] - xs[index - 1]) * covered;
-  }
-  return area;
-}
-
-test('levels increase the playable area, room count and collection objectives', () => {
-  assert.ok(LEVELS.length >= 8);
-  let previous;
-  for (const level of LEVELS) {
-    const rooms = new Set(level.rooms.map(roomKey));
-    assert.equal(rooms.size, level.rooms.length, `level ${level.id}: repeated room`);
-    assert.ok(level.collectibles.length >= 12);
-    assert.ok(level.goalBlocks > 0);
-    const availableBlocks = level.towers.reduce((sum, tower) => sum + tower.layers * 3, 0);
-    assert.ok(level.goalBlocks <= availableBlocks, `level ${level.id}: impossible block objective`);
-    assert.ok(availableBlocks <= 250, `level ${level.id}: excessive dynamic-body count`);
-    assert.ok(Math.abs(level.ceiling * METERS_PER_UNIT - 2.8) < 1e-10);
-    for (const room of level.rooms) {
-      assert.ok(room.x - ROOM_WIDTH / 2 >= level.bounds.minX);
-      assert.ok(room.x + ROOM_WIDTH / 2 <= level.bounds.maxX);
-      assert.ok(room.z - ROOM_DEPTH / 2 >= level.bounds.minZ);
-      assert.ok(room.z + ROOM_DEPTH / 2 <= level.bounds.maxZ);
-    }
-    if (previous) {
-      assert.ok(level.id > previous.id);
-      assert.ok(level.rooms.length > previous.rooms.length);
-      assert.ok(floorArea(level.rooms) > floorArea(previous.rooms), `level ${level.id}: area did not grow`);
-      assert.ok(level.collectibles.length > previous.collectibles.length);
-      assert.ok(level.goalBlocks > previous.goalBlocks);
-      for (const room of previous.rooms) assert.ok(rooms.has(roomKey(room)), 'a previous room disappeared');
-    }
-    previous = level;
-  }
-  assert.equal(getLevel(-20), LEVELS[0]);
-  assert.equal(getLevel(LEVELS.length + 20), LEVELS.at(-1));
+test('wing tips collide while the empty corners and space above paper remain free', () => {
+  const hit = createPhysics(fixture([box('wing-tip', [0.025, 0.03, 0.05], [0.213, 1.009, 0])]));
+  let events = 0;
+  hit.plane.addEventListener('collide', () => events++);
+  assert.equal(fly(hit).collided, true);
+  assert.equal(events, 1);
+  assert.equal(fly(createPhysics(fixture([box('outside-wing', [0.015, 0.05, 0.1], [0.25, 1.009, 0])]))).collided, false);
+  const corner = createPhysics(fixture([box('empty-triangle-corner', [0.02, 0.02, 0.02], [0.185, 1, -0.117])], [], [0, 1, 0]));
+  assert.equal(fly(corner, 0, [0, 0, 0]).collided, false, 'triangle wing must not become an enclosing box');
+  assert.equal(fly(createPhysics(fixture([box('above-wing', [0.2, 0.03, 0.2], [0.15, 1.08, 0])]))).collided, false);
 });
 
-test('every room has reachable-height collectibles inside its walls', () => {
-  for (const level of LEVELS) {
-    const counts = new Map(level.rooms.map(room => [roomKey(room), 0]));
-    assert.equal(new Set(level.collectibles.map(mark => mark.id)).size, level.collectibles.length);
-    for (const mark of level.collectibles) {
-      assert.ok([mark.x, mark.y, mark.z].every(Number.isFinite));
-      assert.ok(mark.y > PLANE_RADIUS, `level ${level.id}: mark below the floor`);
-      assert.ok(mark.y < level.ceiling - PLANE_RADIUS, `level ${level.id}: mark above the flight ceiling`);
-      assert.ok(mark.x > level.bounds.minX && mark.x < level.bounds.maxX);
-      assert.ok(mark.z > level.bounds.minZ && mark.z < level.bounds.maxZ);
-      const rooms = level.rooms.filter(room => roomContains(room, mark, PLANE_RADIUS));
-      assert.equal(rooms.length, 1, `level ${level.id}: mark outside the playable house`);
-      counts.set(roomKey(rooms[0]), counts.get(roomKey(rooms[0])) + 1);
-    }
-    for (const count of counts.values()) assert.ok(count >= 12, `level ${level.id}: a room lacks collection targets`);
-    assert.equal(level.rooms.filter(room => roomContains(room, level.start, PLANE_RADIUS)).length, 1);
+test('banked wings and scaled forms retain matching compound hulls', () => {
+  const q = new Quaternion(); q.setFromEuler(0, 0, Math.PI / 2);
+  const physics = createPhysics(fixture([box('banked-wing-tip', [0.025, 0.025, 0.05], [-0.009, 1.213, 0])]));
+  physics.plane.quaternion.copy(q);
+  assert.equal(fly(physics, 1, [0, 0, -4], q).collided, true);
+  for (const size of [0.55, 1, 1.5]) {
+    const p = createPhysics(fixture(), { form: 'glider', size });
+    assert.equal(p.plane.shapes.length, p.aircraft.parts.length);
+    p.aircraft.parts.forEach((part, i) => part.vertices.forEach((vertex, j) => {
+      p.plane.shapes[i].vertices[j].vadd(p.plane.shapeOffsets[i]).toArray().forEach((value, axis) => assert.ok(Math.abs(value - vertex[axis]) < 1e-12));
+    }));
   }
 });
 
-test('all rooms connect through open doors while exterior edges stay closed', () => {
-  for (const level of LEVELS) {
-    const walls = getWalls(level);
-    const graph = new Map(level.rooms.map(room => [roomKey(room), []]));
-    for (let index = 0; index < level.rooms.length; index++) {
-      const room = level.rooms[index];
-      for (const other of level.rooms.slice(index + 1)) {
-        if (!neighbours(room, other)) continue;
-        const centre = [(room.x + other.x) / 2, 3, (room.z + other.z) / 2];
-        const across = room.x === other.x ? 0 : 2;
-        for (const offset of [-DOOR_WIDTH / 2 + PLANE_RADIUS + .1, 0, DOOR_WIDTH / 2 - PLANE_RADIUS - .1]) {
-          for (const height of [1, 3, DOOR_HEIGHT - PLANE_RADIUS - .1]) {
-            const point = [...centre];
-            point[across] += offset;
-            point[1] = height;
-            assert.ok(!walls.some(wall => containsPoint(wall, point)), `level ${level.id}: blocked doorway`);
-          }
-        }
-        const jamb = [...centre];
-        jamb[across] += DOOR_WIDTH / 2 + .1;
-        assert.ok(walls.some(wall => containsPoint(wall, jamb)), 'missing door jamb');
-        const header = [...centre];
-        header[1] = DOOR_HEIGHT + .1;
-        assert.ok(walls.some(wall => containsPoint(wall, header)), 'missing lintel');
-        graph.get(roomKey(room)).push(roomKey(other));
-        graph.get(roomKey(other)).push(roomKey(room));
+test('small aircraft passes a real gap that is too narrow for standard and large wings', () => {
+  const gap = [box('left', [0.4, 2, 0.2], [-0.38, 1, 0]), box('right', [0.4, 2, 0.2], [0.38, 1, 0])];
+  for (const size of [0.55, 1, 1.5]) {
+    const physics = createPhysics(fixture(gap), { form: 'classic', size });
+    assert.equal(fly(physics).collided, size !== 0.55);
+    if (size === 0.55) assert.equal(physics.plane.position.z, -2);
+  }
+});
+
+test('very fast flight cannot tunnel through thin obstacles at any supported size', () => {
+  for (const size of [0.55, 1, 1.5]) {
+    const physics = createPhysics(fixture([box('thin-wall', [4, 3, 0.006], [0, 1, 0], 'wall')]), { form: 'classic', size });
+    const collision = fly(physics, 0.05, [0, 0, -150]);
+    assert.equal(collision.collided, true);
+    assert.ok(physics.plane.position.z >= physics.aircraft.length / 2);
+    assert.equal(collision.body.obstacleId, 'thin-wall');
+  }
+});
+
+test('turning impacts leave the rendered hull clear for a cushion retreat', () => {
+  const physics = createPhysics(fixture([box('wall', [8, 4, 0.006], [0, 1, 0], 'wall')]));
+  for (let i = 0; i < 24; i++) {
+    physics.plane.position.set(0, 1, 0.5);
+    physics.plane.quaternion.setFromEuler(0, i * Math.PI / 12, 0);
+    const target = new Quaternion(); target.setFromEuler(0.4, i * Math.PI / 12 + 0.66, 0.2);
+    assert.equal(fly(physics, 0.25, [0, 0, -2], target).collided, true);
+    assert.equal(fly(physics, 0, [0, 0, 0]).collided, false, 'actual final pose must remain outside the wall');
+    assert.equal(fly(physics, 0.1, [0, 0, 2]).collided, false, 'cushion can retreat without another contact');
+  }
+});
+
+test('table and chair legs leave real low flight routes', () => {
+  const table = [box('table-top', [1.6, 0.06, 1], [0, 0.76, 0])];
+  for (const x of [-0.65, 0.65]) for (const z of [-0.4, 0.4]) table.push(box(`leg-${x}-${z}`, [0.05, 0.72, 0.05], [x, 0.36, z]));
+  const underTable = createPhysics(fixture(table, [], [0, 0.4, 2]));
+  assert.equal(fly(underTable).collided, false);
+  const chair = [box('seat', [0.5, 0.045, 0.5], [0, 0.46, 0])];
+  for (const x of [-0.225, 0.225]) for (const z of [-0.225, 0.225]) chair.push(box(`chair-leg-${x}-${z}`, [0.05, 0.435, 0.05], [x, 0.2175, z]));
+  assert.equal(fly(createPhysics(fixture(chair, [], [0, 0.24, 2]), { form: 'classic', size: 0.55 })).collided, false);
+  assert.equal(fly(createPhysics(fixture(chair, [], [0, 0.24, 2]))).collided, true);
+});
+
+test('closed doors block flight and opened doors keep their real leaf beside the opening', () => {
+  const door = { id: 'test-door', size: [1.1, 2.2, 0.055], position: [0, 1.1, 0], rotation: [0, 0, 0], hinge: { position: [-0.55, 1.1, 0], angle: -Math.PI / 2 } };
+  const physics = createPhysics(fixture([], [door]));
+  assert.equal(fly(physics).collided, true);
+  physics.reset(); physics.setDoorOpen('test-door', true);
+  assert.equal(fly(physics).collided, false);
+  const pose = getDoorPose(door, true), entry = physics.doorBodies.get(door.id);
+  assert.deepEqual(entry.obstacle.body.position.toArray(), pose.position);
+  physics.plane.position.set(-0.55, 1, 2);
+  assert.equal(fly(physics).collided, true, 'the open door leaf remains solid');
+  physics.reset(); assert.equal(entry.open, false);
+});
+
+test('star collection includes wing tips and the swept path between frames', () => {
+  const physics = createPhysics(fixture());
+  const previous = physics.plane.position.clone();
+  fly(physics, 0.05, [0, 0, -100]);
+  assert.equal(physics.canCollectStar({ x: 0.42, y: 1.01, z: 0 }, previous), true);
+  assert.equal(physics.canCollectStar({ x: 0.54, y: 1.015, z: 0 }, previous), false);
+  assert.equal(physics.canCollectStar({ x: 0, y: 1, z: 0 }, previous), true);
+  assert.equal(STAR_COLLECTION_RADIUS, 0.24);
+  const touch = createPhysics(fixture([], [], [0, 1, 0]));
+  assert.equal(touch.canCollectStar({ x: 0.213, y: 1.009, z: 0.0819, collectRadius: 0.003 }, touch.plane.position), true);
+  assert.equal(touch.canCollectStar({ x: 0, y: 0.986, z: 0, collectRadius: 0 }, touch.plane.position), true);
+});
+
+test('bank and size alter real star reach, and magnets cannot collect through walls', () => {
+  const rotated = createPhysics(fixture([], [], [0, 1, 0]));
+  rotated.plane.quaternion.setFromEuler(0, 0, Math.PI / 2);
+  assert.equal(rotated.canCollectStar({ x: -0.009, y: 1.213, z: 0.0819, collectRadius: 0.005 }, rotated.plane.position), true);
+  const small = createPhysics(fixture([], [], [0, 1, 0]), { form: 'classic', size: 0.55 });
+  assert.equal(small.canCollectStar({ x: 0.47, y: 1, z: 0 }, small.plane.position), false);
+  const wall = createPhysics(fixture([box('wall', [0.04, 3, 4], [0.35, 1, 0], 'wall')], [], [0, 1, 0]));
+  const star = { x: 0.48, y: 1, z: 0.1 };
+  assert.equal(wall.canCollectStar(star, wall.plane.position, 1.5), false);
+  assert.equal(wall.hasLineOfSight(wall.plane.position, star), false);
+  assert.equal(wall.hasLineOfSight([0, 1, 0], [0, 1, 1]), true);
+});
+
+test('no global height clamp stops open shafts or garden flight', () => {
+  const slabs = [box('left-slab', [4, 0.14, 4], [-2.65, 3.08, 0], 'floor'), box('right-slab', [4, 0.14, 4], [2.65, 3.08, 0], 'floor')];
+  const shaft = createPhysics(fixture(slabs, [], [0, -2, 0]));
+  assert.equal(fly(shaft, 1, [0, 12, 0]).collided, false);
+  assert.equal(shaft.plane.position.y, 10);
+  assert.equal(shaft.getCeilingAt({ x: 0, y: 1, z: 0 }), Infinity);
+  assert.ok(Math.abs(shaft.getCeilingAt({ x: 2, y: 1, z: 0 }) - 3.01) < 1e-10);
+  const slab = createPhysics(fixture(slabs, [], [2, 1, 0]));
+  assert.equal(fly(slab, 1, [0, 12, 0]).collided, true);
+});
+
+test('camera trace stops before a wall and reset clears flight motion', () => {
+  const physics = createPhysics(fixture([box('wall', [4, 3, 0.12], [0, 1, 0], 'wall')]));
+  const camera = physics.traceCamera([0, 1, 1], [0, 1, -2], 0.18);
+  assert.ok(camera.z > 0.24);
+  fly(physics); physics.reset();
+  assert.deepEqual(physics.plane.position.toArray(), [0, 1, 2]);
+  assert.equal(physics.plane.velocity.lengthSquared(), 0);
+  assert.equal(physics.plane.previousPosition.distanceTo(physics.plane.position), 0);
+});
+
+test('the complete house starts clear, has a usable vertical stair shaft, and supplies exact geometry', () => {
+  const physics = createPhysics(HOUSE);
+  assert.equal(fly(physics, 0, [0, 0, 0]).collided, false, 'launch point must be clear');
+  assert.equal(physics.world.bodies.length, HOUSE.obstacles.length + HOUSE.doors.length + 1);
+  physics.plane.position.set(7, -2, 2.1);
+  const contact = fly(physics, 1, [0, 10, 0]);
+  assert.equal(contact.collided, false, `stair shaft blocked by ${contact.body?.obstacleId}`);
+  assert.equal(physics.plane.position.y, 8);
+});
+
+test('every open window is a real two-way passage through the complete house', () => {
+  const physics = createPhysics(HOUSE);
+  for (const door of HOUSE.doors) physics.setDoorOpen(door.id, true);
+  const windows = HOUSE.openings.filter(opening => opening.type === 'window' && opening.open);
+  assert.ok(windows.length >= 3);
+  for (const window of windows) for (const side of [-1, 1]) {
+    const normal = window.horizontal ? [0, 0, 1] : [1, 0, 0], centre = window.position;
+    physics.plane.position.set(centre[0] + normal[0] * 0.7 * side, centre[1], centre[2] + normal[2] * 0.7 * side);
+    const orientation = new Quaternion(); orientation.setFromEuler(0, Math.atan2(normal[0] * side, normal[2] * side), 0);
+    physics.plane.quaternion.copy(orientation);
+    const contact = fly(physics, 0.5, normal.map(n => -n * 2.8 * side), orientation);
+    assert.equal(contact.collided, false, `${window.id} blocked by ${contact.body?.obstacleId}`);
+  }
+});
+
+test('all opened house doors permit both directions without neighbouring door-leaf collisions', () => {
+  const physics = createPhysics(HOUSE);
+  for (const door of HOUSE.doors) physics.setDoorOpen(door.id, true);
+  for (const door of HOUSE.doors) for (const side of [-1, 1]) {
+    const yaw = door.rotation[1], normal = [Math.sin(yaw), 0, Math.cos(yaw)], centre = door.position;
+    physics.plane.position.set(centre[0] + normal[0] * 0.7 * side, centre[1], centre[2] + normal[2] * 0.7 * side);
+    const orientation = new Quaternion(); orientation.setFromEuler(0, Math.atan2(normal[0] * side, normal[2] * side), 0);
+    physics.plane.quaternion.copy(orientation);
+    const contact = fly(physics, 0.5, normal.map(n => -n * 2.8 * side), orientation);
+    assert.equal(contact.collided, false, `${door.id} blocked by ${contact.body?.obstacleId}`);
+  }
+});
+
+test('every star has a clear pickup pose for the free standard plane and small plane', () => {
+  for (const size of [1, 0.55]) {
+    const physics = createPhysics(HOUSE, { form: 'classic', size });
+    for (const open of [false, true]) {
+      for (const door of HOUSE.doors) physics.setDoorOpen(door.id, open);
+      for (const star of HOUSE.collectibles) {
+        const reachable = [0, Math.PI / 2].some(yaw => {
+          physics.plane.position.set(star.x, star.y, star.z);
+          physics.plane.quaternion.setFromEuler(0, yaw, 0);
+          return !fly(physics, 0, [0, 0, 0]).collided && physics.canCollectStar(star, physics.plane.position);
+        });
+        assert.equal(reachable, true, `${star.id} lacks a clear standard pickup pose; size ${size}, doors open: ${open}`);
       }
-      for (const [dx, dz] of [[ROOM_WIDTH, 0], [-ROOM_WIDTH, 0], [0, ROOM_DEPTH], [0, -ROOM_DEPTH]]) {
-        if (level.rooms.some(other => other.x === room.x + dx && other.z === room.z + dz)) continue;
-        assert.ok(walls.some(wall => containsPoint(wall, [room.x + dx / 2, 3, room.z + dz / 2])), `level ${level.id}: exterior doorway`);
-      }
     }
-    const visited = new Set();
-    const queue = [roomKey(level.rooms[0])];
-    while (queue.length) {
-      const key = queue.pop();
-      if (visited.has(key)) continue;
-      visited.add(key);
-      queue.push(...graph.get(key));
-    }
-    assert.equal(visited.size, level.rooms.length, `level ${level.id}: disconnected room`);
   }
-});
-
-test('ceiling protection clamps the complete aircraft and removes upward force', () => {
-  const physics = createPhysics(LEVELS.at(-1));
-  const { plane, level } = physics;
-  const maximum = level.ceiling - PLANE_RADIUS;
-  plane.position.y = level.ceiling + 6;
-  plane.previousPosition.y = level.ceiling + 5;
-  plane.interpolatedPosition.y = level.ceiling + 4;
-  plane.velocity.set(4, 8, -3);
-  plane.force.set(7, 200, -2);
-  assert.equal(physics.enforceCeiling(), true);
-  assert.equal(plane.position.y, maximum);
-  assert.ok(plane.previousPosition.y <= maximum);
-  assert.ok(plane.interpolatedPosition.y <= maximum);
-  assert.equal(plane.velocity.y, 0);
-  assert.equal(plane.force.y, 0);
-  assert.equal(plane.velocity.x, 4);
-  assert.equal(plane.force.z, -2);
-  assert.equal(physics.enforceCeiling(), false);
-  assert.ok(plane.position.y * METERS_PER_UNIT < 2.8);
-  const ceilings = physics.world.bodies.filter(body => body.kind === 'ceiling');
-  assert.equal(ceilings.length, level.rooms.length);
-  for (const ceiling of ceilings) {
-    assert.ok(Math.abs(ceiling.position.y - ceiling.shapes[0].halfExtents.y - level.ceiling) < 1e-10);
-  }
-});
-
-test('standing towers never award free points and a reset clears motion and score', () => {
-  for (const level of LEVELS) {
-    const physics = createPhysics(level);
-    for (let step = 0; step < 180; step++) physics.world.step(1 / 60);
-    assert.equal(physics.countFallen(), 0, `level ${level.id}: untouched tower was scored`);
-    const block = physics.blocks[0];
-    block.body.position.x += 2;
-    block.body.velocity.set(3, 2, 1);
-    block.body.angularVelocity.set(1, 2, 3);
-    block.body.force.set(1, 2, 3);
-    block.body.torque.set(3, 2, 1);
-    assert.equal(physics.countFallen(), 1);
-    block.body.position.copy(block.home);
-    assert.equal(physics.countFallen(), 1, 'a fallen block should remain counted');
-    physics.plane.position.y = 15;
-    physics.plane.force.set(1, 2, 3);
-    physics.plane.torque.set(1, 2, 3);
-    physics.plane.collisionFilterMask = -1;
-    physics.reset();
-    assert.equal(physics.countFallen(), 0);
-    assert.equal(physics.plane.position.y, level.start.y);
-    assert.equal(physics.plane.collisionFilterMask, 0);
-    for (const body of [physics.plane, block.body]) {
-      for (const vector of [body.velocity, body.angularVelocity, body.force, body.torque]) assert.equal(vector.lengthSquared(), 0);
-      assert.equal(body.previousPosition.distanceTo(body.position), 0);
-      assert.equal(body.interpolatedPosition.distanceTo(body.position), 0);
-    }
-    assert.equal(physics.world.contacts.length, 0);
-    assert.equal(physics.world.accumulator, 0);
-    for (let step = 0; step < 60; step++) physics.world.step(1 / 60);
-    assert.equal(physics.countFallen(), 0, `level ${level.id}: reset tower was scored`);
-  }
-});
-
-function flyThrough(level, start, velocity) {
-  const physics = createPhysics(level);
-  physics.plane.collisionFilterMask = -1;
-  physics.plane.position.set(...start);
-  let solidContacts = 0;
-  physics.plane.addEventListener('collide', event => {
-    if (event.body.kind === 'solid') solidContacts++;
-  });
-  for (let step = 0; step < 70; step++) {
-    physics.plane.velocity.set(...velocity);
-    physics.plane.force.y = physics.plane.mass * 9.82;
-    physics.world.step(1 / 60);
-    physics.enforceCeiling();
-  }
-  return { position: physics.plane.position, solidContacts };
-}
-
-test('actual physics permits both door orientations and blocks jambs, lintels and the exterior', () => {
-  const northDoor = flyThrough(getLevel(1), [0, 3, -14], [0, 0, -8]);
-  assert.ok(northDoor.position.z < -22);
-  assert.equal(northDoor.solidContacts, 0);
-  const eastDoor = flyThrough(getLevel(2), [10, 3, -34], [8, 0, 0]);
-  assert.ok(eastDoor.position.x > 18);
-  assert.equal(eastDoor.solidContacts, 0);
-  const jamb = flyThrough(getLevel(1), [6, 3, -14], [0, 0, -8]);
-  assert.ok(jamb.position.z > -17);
-  assert.ok(jamb.solidContacts > 0);
-  const lintel = flyThrough(getLevel(1), [0, DOOR_HEIGHT + 1, -14], [0, 0, -8]);
-  assert.ok(lintel.position.z > -17);
-  assert.ok(lintel.solidContacts > 0);
-  const exterior = flyThrough(getLevel(1), [0, 3, 14], [0, 0, 8]);
-  assert.ok(exterior.position.z < 17);
-  assert.ok(exterior.solidContacts > 0);
 });

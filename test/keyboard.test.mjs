@@ -11,7 +11,8 @@ function setup(t,{state='ready',dialog=null,acceptCharge=true}={}){
  const window=new EventTarget(),document=new EventTarget(),keys=new Set(),calls=[];
  document.hidden=false;
  const launcher=element('button'),body=element();
- const actions=Object.fromEntries(['cancelCharge','release','quickLaunch','pause','reset','menu','closeMenu','board','closeBoard','sound','suspend'].map(name=>[name,()=>{calls.push(name);} ]));
+ const actions=Object.fromEntries(['cancelCharge','release','quickLaunch','pause','reset','menu','closeMenu','board','closeBoard','sound','suspend','shop','closeShop'].map(name=>[name,()=>{calls.push(name);} ]));
+ actions.boost=index=>calls.push(`boost:${index}`);
  actions.beginCharge=()=>{calls.push('beginCharge');return acceptCharge;};
  actions.menu=()=>{calls.push('menu');dialog='menu';};
  actions.closeMenu=()=>{calls.push('closeMenu');dialog=null;};
@@ -176,4 +177,21 @@ test('IME composition and already handled events do not run game commands',t=>{
  event.preventDefault();
  h.document.dispatchEvent(event);
  assert.deepEqual(h.calls,[]);
+});
+
+test('shop Escape closes only the shop and its size input keeps native arrows',t=>{
+ const h=setup(t,{dialog:'shop'});
+ h.key('keydown','ArrowRight',{target:element('input')});
+ h.key('keydown','KeyG',{target:element('input')});
+ assert.deepEqual(h.calls,[]);
+ h.key('keydown','Escape');
+ assert.deepEqual(h.calls,['cancelCharge','closeShop']);
+});
+test('boost shortcuts fire once only during flight and never from a dialog',t=>{
+ const h=setup(t,{state:'flying'});
+ h.key('keydown','Digit1');h.key('keydown','Digit1',{repeat:true});h.key('keydown','Digit2');
+ assert.deepEqual(h.calls,['boost:0','boost:1']);
+ h.setDialog('paused');h.key('keydown','Digit1');
+ h.setDialog(null);h.setState('ready');h.key('keydown','Digit1');
+ assert.deepEqual(h.calls,['boost:0','boost:1']);
 });
