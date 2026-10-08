@@ -10,6 +10,8 @@ import { createShop } from './shop.js';
 import { createLeaderboard } from './leaderboard.js';
 import { createKeyboardControls } from './keyboard.js';
 import { createDialogs } from './dialogs.js';
+import { createFlightCamera } from './camera.js';
+import { readViewMode, saveViewMode, updateViewButton } from './view-mode.js';
 
 const $ = id => document.getElementById(id);
 const show = (id, visible) => { $(id).hidden = !visible; };
@@ -20,7 +22,8 @@ const leaderboard = createLeaderboard();
 const PENDING_KEY = 'stubenflieger.pending-run.v1';
 const totalRooms = new Set(HOUSE.rooms.map(room => room.bonusId || room.id)).size;
 const nameOf = id => CATALOG.find(item => item.id === id)?.name || id;
-let keyboard, physics, view, run, tuning, equipped, shop;
+let keyboard, physics, view, run, tuning, equipped, shop, flightCamera, aircraftLength = .33;
+let cameraMode = readViewMode();
 let state = 'ready', paused = false, charging = false, power = 0, chargeStart = 0, dragPower = 0, launchTurn = 0;
 let heading = 0, speed = 0, verticalSpeed = 0, flightTime = 0, clock = 0, endingAt = 0, endReason = '', won = false;
 let chargePointer = null, stickPointer = null, chargeOrigin = { x: 0, y: 0 }, touch = { steer: 0, pitch: 0 }, input = { steer: 0, pitch: 0 };
@@ -29,9 +32,15 @@ let sound = false, audio, rotation = 0, settled = false, launched = false, stora
 let firstDiscoveryBonus = 0, rewardUntil = 0, retryStarAt = 0;
 let liftUntil = 0, turboUntil = 0, magnetUntil = 0, cushion = false, recoveryUntil = 0;
 const keys = new Set(), position = new Vector3(), previousPosition = new Vector3(), velocity = new Vector3();
-const direction = new Vector3(), cameraGoal = new Vector3(), lookGoal = new Vector3(), lookAt = new Vector3();
 const orientation = new Quaternion(), flightEuler = new Euler(0, 0, 0, 'YXZ');
 const hint = message => { $('hint').textContent = message; };
+function toggleCamera() {
+  cameraMode = cameraMode === 'fpv' ? 'chase' : 'fpv'; saveViewMode(cameraMode);
+  flightCamera?.setMode(cameraMode); updateViewButton($('camera-mode'), cameraMode);
+  if (view && physics) followCamera(true);
+  if (!dialogs.current()) $('game').focus({ preventScroll: true });
+}
+$('camera-mode').onclick = toggleCamera; updateViewButton($('camera-mode'), cameraMode);
 $('retry').onclick = () => location.reload();
 try {
   const saved = Number(localStorage.getItem('stubenflieger.rotation'));
@@ -125,7 +134,7 @@ function prepareRun() {
   run = createRunState(HOUSE, profile); equipped = profile.equipped;
   tuning = flightTuning(equipped.form, equipped.size);
   physics.configureAircraft(equipped.form, equipped.size); physics.reset();
-  view.setAircraft(equipped.form, equipped.size, equipped.effect);
+  aircraftLength = view.setAircraft(equipped.form, equipped.size, equipped.effect, equipped.color).length;
   view.resetCollectibles(profile.discoveredStarIds);
   firstDiscoveryBonus = rewardUntil = retryStarAt = 0; show('star-reward', false);
   for (const door of HOUSE.doors) applyDoor(door.id, run.opened.has(door.id));
@@ -326,6 +335,7 @@ $('close-leaderboard').onclick = closeLeaderboard; $('pause-menu').onclick = ope
 keyboard = createKeyboardControls({ window, document, keys, getState: () => state, getDialog: () => dialogs.current(), launcher: $('launch'), actions: {
   beginCharge, cancelCharge, release: launch, quickLaunch, reset, pause: () => pause(), suspend,
   menu: openMenu, closeMenu, closeBoard: closeLeaderboard, shop: openShop, closeShop, boost: useBoost,
+  camera: toggleCamera,
   board: () => { if (dialogs.current() !== 'leaderboard') openLeaderboard(dialogs.current()); }, sound: () => $('sound').click(),
 } });
 function updateBoosts() {
@@ -361,19 +371,8 @@ function updateHUD() {
   show('ceiling-warning', nearCeiling && state === 'flying');
 }
 function followCamera(immediate = false, dt = .016) {
-  position.copy(physics.plane.position); direction.set(Math.sin(heading), 0, -Math.cos(heading));
-  cameraGoal.copy(position).addScaledVector(direction, state === 'ready' ? -.42 : -1.45);
-  if (state === 'ready') cameraGoal.x -= 1.25;
-  cameraGoal.y += state === 'ready' ? .95 : .62;
-  cameraGoal.copy(physics.traceCamera(position, cameraGoal, .12));
-  if (immediate) view.camera.position.copy(cameraGoal);
-  else {
-    view.camera.position.lerp(cameraGoal, 1 - Math.exp(-dt * 9));
-    view.camera.position.copy(physics.traceCamera(position, view.camera.position, .1));
-  }
-  lookGoal.copy(position).addScaledVector(direction, state === 'ready' ? .25 : 1.3); lookGoal.y += .08;
-  if (immediate) lookAt.copy(lookGoal); else lookAt.lerp(lookGoal, 1 - Math.exp(-dt * 9));
-  view.camera.lookAt(lookAt);
+  flightCamera.update({ position: view.plane.position, quaternion: view.plane.quaternion,
+    heading, length: aircraftLength, model: view.plane, id: 'solo' }, { dt, immediate, ready: state === 'ready' });
 }
 function readFlightInput(now, dt) {
   let steer = 0, pitch = 0;
@@ -481,6 +480,7 @@ const recoveryVelocity = new Vector3(), recoveryOrientation = new Quaternion();
 try {
   physics = createPhysics(HOUSE, progression.getProfile().equipped);
   view = createScene($('game'), physics, viewport);
+  flightCamera = createFlightCamera(view.camera, { traceCamera: (from, to, radius) => physics.traceCamera(from, to, radius), mode: cameraMode });
   reset(); show('loading', false); requestAnimationFrame(frame);
 } catch (error) { console.error(error); show('loading', false); dialogs.open('error'); }
 $('game').addEventListener('webglcontextlost', event => {

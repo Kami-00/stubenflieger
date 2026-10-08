@@ -1,4 +1,6 @@
 import { createDuelView } from './duel-view.js';
+import { createDuelAppearancePicker } from './duel-appearance.js';
+import { readViewMode, saveViewMode, updateViewButton } from './view-mode.js';
 import { DUEL_PLAYER_IDS, DUEL_PLAYER_COLORS } from './duel-arena.js';
 import { DUEL_SESSION_PREFIX, canHostStart, clampAxis, duelInput, duelResultTitle, inviteAddress, inviteRoom, isPilotOut, pilotName, remainingTime } from './duel-controls.js';
 
@@ -11,6 +13,18 @@ let stateWinner = null, stateReason = '', busy = false, stopped = false, suspend
 let reconnectTimer, reconnectAttempt = 0, reconnectUntil = 0, lastMessageAt = 0, lastStateAt = 0, ping = null;
 let stickPointer = null, firePointer = null, feedbackTimer, shotTimer, hitTimer, damageTimer, fireReleaseTimer;
 let lastHealth = new Map(), projectileIds = new Set(), lastRenderedPhase = 'entry', operation = 0, wasSpectating = false;
+let cameraMode = readViewMode(), appearanceReceived = false, appearancePending = null;
+const appearancePicker = createDuelAppearancePicker(appearance => {
+  if (!send({ type: 'appearance', appearance })) return false;
+  appearancePending = appearance; return true;
+});
+function toggleCamera() {
+  cameraMode = cameraMode === 'fpv' ? 'chase' : 'fpv'; saveViewMode(cameraMode);
+  view?.setCameraMode(cameraMode); updateViewButton($('duel-camera-mode'), cameraMode);
+  if (['playing', 'countdown', 'reconnecting'].includes(phase)) $('duel-canvas').focus({ preventScroll: true });
+}
+$('duel-camera-mode').onclick = toggleCamera; updateViewButton($('duel-camera-mode'), cameraMode);
+const effectNames = { none: 'Ohne Effekt', mint: 'Minzspur', spark: 'Sternenstaub', confetti: 'Konfetti' };
 const lobbyCards = new Map(), opponentCards = new Map();
 function element(tag, className, text) {
   const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
@@ -18,6 +32,7 @@ function element(tag, className, text) {
 for (const [index, id] of DUEL_PLAYER_IDS.entries()) {
   const card = element('div', 'pilot-card'); card.id = `lobby-${id}`; card.style.setProperty('--player-color', DUEL_PLAYER_COLORS[id]);
   const identity = element('div', 'pilot-identity'); identity.append(element('strong', 'pilot-name'), element('span', 'host-badge', 'Gastgeber'));
+  const appearance = element('span', 'pilot-appearance'); appearance.append(element('i', 'pilot-swatch'), element('span', 'pilot-effect')); identity.append(appearance);
   card.append(element('span', 'pilot-number', String(index + 1).padStart(2, '0')), identity, element('span', 'pilot-state'));
   $('lobby-players').append(card); lobbyCards.set(id, card);
   const opponent = element('div', 'opponent-card'); opponent.id = `health-${id}`; opponent.style.setProperty('--player-color', DUEL_PLAYER_COLORS[id]);
@@ -128,6 +143,7 @@ function render() {
   show('duel-entry', phase === 'entry'); show('duel-lobby', phase === 'lobby');
   show('duel-result', phase === 'finished' || phase === 'expired');
   show('duel-hud', inFlight); show('duel-help', inFlight && !isOut);
+  show('duel-camera-mode', inFlight); appearancePicker.render(phase, connected(), busy);
   show('duel-spectator', inFlight && isOut);
   show('duel-countdown', phase === 'countdown');
   show('duel-feedback', phase === 'playing');
@@ -155,6 +171,9 @@ function render() {
     card.querySelector('.host-badge').hidden = !player || id !== hostId;
     card.classList.toggle('is-empty', !player);
     card.classList.toggle('is-ready', Boolean(player?.ready && player?.connected));
+    card.querySelector('.pilot-appearance').hidden = !player;
+    card.querySelector('.pilot-swatch').style.backgroundColor = player?.appearance?.color || DUEL_PLAYER_COLORS[id];
+    card.querySelector('.pilot-effect').textContent = effectNames[player?.appearance?.effect] || effectNames.none;
   }
   const participants = players.filter(player => !player.left), host = players.find(player => player.id === hostId), isHost = slot === hostId;
   $('lobby-count').textContent = `${participants.length} / 5 Piloten`;
@@ -214,12 +233,13 @@ async function enterRoom(resume = null) {
   catch (error) { showError(error.message); $('duel-name').focus(); return; }
   busy = true; showError(); render(); const requestId = ++operation;
   try {
-    const result = await api(room ? `/api/duels/${room}/join` : '/api/duels', { name, ...(resume ? { token: resume.token } : {}) });
+    const result = await api(room ? `/api/duels/${room}/join` : '/api/duels', { name, ...(resume ? { token: resume.token } : { appearance: appearancePicker.current() }) });
     if (requestId !== operation) return;
     if (!inviteRoom(`#room=${result.room}`) || typeof result.token !== 'string' || !DUEL_PLAYER_IDS.includes(result.slot)) throw new Error('Die Einladung konnte nicht geöffnet werden. Bitte versuche es erneut.');
     room = result.room; token = result.token; slot = result.slot; seq = Number.isSafeInteger(resume?.seq) ? resume.seq : 0;
     history.replaceState(null, '', `/duel#room=${room}`);
     saveSession(); phase = 'lobby'; stopped = false; reconnectUntil = 0; reconnectAttempt = 0; players = [];
+    appearanceReceived = false; appearancePending = null;
     connectSocket();
   } catch (error) {
     if (requestId !== operation) return;
@@ -256,6 +276,9 @@ function shotFeedback(next) {
 }
 function connectSocket() {
   if (!room || !token || stopped || suspended) return;
+  // A dropped appearance request has no acknowledgement. The new connection
+  // must restore the server's choice instead of leaving the editor locked.
+  appearancePending = null; appearanceReceived = false; appearancePicker.reject();
   clearTimeout(reconnectTimer);
   if (socket) { const old = socket; socket = null; old.close(); }
   const url = new URL(`/api/duels/${room}/socket`, location.origin);
@@ -273,10 +296,14 @@ function connectSocket() {
       const data = JSON.parse(event.data);
       if (data.type === 'welcome' && DUEL_PLAYER_IDS.includes(data.slot)) { slot = data.slot; saveSession(); }
       if (data.type === 'pong') { ping = Math.min(9999, Math.max(0, Date.now() - Number(data.sentAt))); statusText(); }
-      if (data.type === 'error') showError(typeof data.message === 'string' ? data.message : 'Das hat gerade nicht geklappt.');
+      if (data.type === 'error') { appearancePending = null; appearancePicker.reject(); showError(typeof data.message === 'string' ? data.message : 'Das hat gerade nicht geklappt.'); }
       if (data.type !== 'state') return;
       if (!['lobby', 'countdown', 'playing', 'finished', 'reconnecting', 'expired'].includes(data.phase)) return;
       lastStateAt = Date.now(); phase = data.phase; players = Array.isArray(data.players) ? data.players : []; hostId = data.hostId || null;
+      const ownAppearance = myPlayer()?.appearance;
+      if (ownAppearance && (!appearanceReceived || (appearancePending && appearancePicker.matches(ownAppearance)))) {
+        appearancePicker.confirm(ownAppearance); appearanceReceived = true; appearancePending = null;
+      }
       countdown = Number(data.countdown) || 3; remaining = Number.isFinite(data.remaining) ? data.remaining : 180;
       stateWinner = data.winner ?? data.snapshot?.winner ?? null; stateReason = data.reason || data.snapshot?.reason || '';
       if (phase === 'lobby' || phase === 'countdown') { rematchPending = false; lastHealth.clear(); projectileIds.clear(); }
@@ -313,6 +340,7 @@ function leaveRoom({ notify = true, forget = true } = {}) {
   if (socket) { const old = socket; socket = null; old.close(1000, 'leave'); }
   token = slot = hostId = null; players = []; snapshot = null; phase = 'entry'; ping = null; wasSpectating = false;
   stateWinner = null; stateReason = ''; lastHealth.clear(); projectileIds.clear(); rematchPending = false;
+  appearancePending = null; appearanceReceived = false; appearancePicker.reject();
 }
 function newRoom() {
   leaveRoom(); room = null; history.replaceState(null, '', '/duel'); showError(); warning(''); render(); $('duel-name').focus();
@@ -344,7 +372,11 @@ $('share-invite').onclick = async () => {
   catch (error) { if (error.name !== 'AbortError') { $('invite-link').focus(); $('invite-link').select(); $('invite-status').textContent = 'Teilen ist gerade nicht möglich. Kopiere den markierten Link.'; } }
 };
 document.addEventListener('keydown', event => {
-  if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey || event.isComposing || phase !== 'playing' || spectating() || !connected()) return;
+  if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
+  if (event.code === 'KeyV' && ['playing', 'countdown', 'reconnecting'].includes(phase) && !event.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) {
+    event.preventDefault(); if (!event.repeat) toggleCamera(); return;
+  }
+  if (phase !== 'playing' || spectating() || !connected()) return;
   if (event.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),a,button:not(#fire-button)')) return;
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
     event.preventDefault(); keys.add(event.code); $('fire-button').classList.toggle('active', currentInput().fire);
@@ -410,5 +442,5 @@ function frame(now) {
   view?.update(snapshot, slot, dt, { ...currentInput(), active });
   requestAnimationFrame(frame);
 }
-try { view = createDuelView($('duel-canvas')); requestAnimationFrame(frame); void startFromLocation(); }
+try { view = createDuelView($('duel-canvas')); view.setCameraMode(cameraMode); requestAnimationFrame(frame); void startFromLocation(); }
 catch { showError('Die 3D-Ansicht konnte nicht starten. Lade die Seite in einem aktuellen Browser neu.'); $('create-duel').disabled = $('join-duel').disabled = true; }

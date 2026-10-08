@@ -7,6 +7,14 @@ export function duelName(value) {
   if (name.length < 2 || name.length > 18 || !/^[\p{L}\p{N} _.'-]+$/u.test(name)) throw new Error('Nutze 2–18 Buchstaben oder Zahlen für deinen Namen.');
   return name;
 }
+export function duelAppearance(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some(key => key !== 'color' && key !== 'effect')) throw new Error('Ungültiges Flugzeug-Aussehen.');
+  return {
+    color: normalizeAircraftColor(value.color === undefined ? null : value.color),
+    effect: normalizeEffect(value.effect === undefined ? 'none' : value.effect),
+  };
+}
 export async function readDuelJson(request) {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) throw new Error('JSON erwartet.');
   if (Number(request.headers.get('content-length')) > 1024) throw new Error('Anfrage zu groß.');
@@ -52,7 +60,7 @@ export async function handleDuelRequest(request, env) {
   let input;
   try {
     if (action !== 'socket') {
-      input = await readDuelJson(request); input = { name: duelName(input.name), ...(create || input.token === undefined ? {} : { token: input.token }) };
+      input = await readDuelJson(request); input = { name: duelName(input.name), ...(create || input.token === undefined ? {} : { token: input.token }), ...(input.appearance === undefined ? {} : { appearance: duelAppearance(input.appearance) }) };
       if (input.token !== undefined && !TOKEN_PATTERN.test(input.token)) throw new Error('Ungültiger Zugang.');
     } else if (!TOKEN_PATTERN.test(url.searchParams.get('token') || '')) throw new Error('Ungültiger Zugang.');
   } catch (error) { return duelJson({ error: error.message }, 400); }
@@ -65,3 +73,4 @@ export async function handleDuelRequest(request, env) {
   internal.search = '';
   return target.fetch(new Request(internal, { method: 'POST', headers: { 'content-type': 'application/json', origin: url.origin }, body: JSON.stringify({ ...input, room }) }));
 }
+import { normalizeAircraftColor, normalizeEffect } from '../src/cosmetics.js';

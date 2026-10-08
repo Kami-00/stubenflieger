@@ -39,7 +39,7 @@ test('permanent purchases, equipment and size persist, while purchases leave the
   for (const id of ['upgrade:size', 'plane:glider', 'effect:mint', 'boost:lift', 'boost:turbo', `door:${HOUSE.doors[0].id}`]) progression.purchase(id);
   progression.equipForm('glider'); progression.equipEffect('mint'); progression.equipBoosts(['lift', 'turbo']); progression.setSize(.55); progression.setPermanentDoorsEnabled(false);
   const reloaded = createProgression(storage).getProfile();
-  assert.deepEqual(reloaded.equipped, { form: 'glider', effect: 'mint', boosts: ['lift', 'turbo'], size: .55 });
+  assert.deepEqual(reloaded.equipped, { form: 'glider', effect: 'mint', boosts: ['lift', 'turbo'], size: .55, color: null });
   assert.equal(reloaded.useDoorUnlocks, false);
   assert.equal(reloaded.highscore, originalHighscore);
   const spent = CATALOG.filter(item => reloaded.owned.includes(item.id)).reduce((sum, item) => sum + item.price, 0);
@@ -105,7 +105,7 @@ test('v1 migration preserves money, purchases, equipment and receipts without in
   storage.data.set(PROFILE_KEY, JSON.stringify(old));
   const progression = createProgression(storage), profile = progression.getProfile();
   assert.equal(profile.version, 2); assert.equal(profile.points, old.points); assert.equal(profile.highscore, old.highscore);
-  assert.deepEqual(profile.owned, old.owned); assert.deepEqual(profile.equipped, old.equipped);
+  assert.deepEqual(profile.owned, old.owned); assert.deepEqual(profile.equipped, { ...old.equipped, color: null });
   assert.equal(profile.useDoorUnlocks, false); assert.deepEqual(profile.discoveredStarIds, []);
   assert.equal(storage.data.get(PROFILE_KEY), JSON.stringify(old), 'reading a v1 profile must not write a migration');
   assert.equal(progression.creditRun('already-settled-run', { stars: 1 }).credited, 0);
@@ -197,4 +197,62 @@ test('malformed v2 history is reported rather than silently reset and repaid', (
   assert.equal(reloaded.getStatus().available, false);
   assert.throws(() => reloaded.creditStar('another-run', 'living-star-1'), /Profil/);
   assert.equal(storage.data.get(PROFILE_KEY), corrupt);
+});
+
+test('one permanent color upgrade costs 2000, then every color change and paper restore are free', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  assert.equal(CATALOG.find(item => item.id === 'upgrade:color').price, 2000);
+  assert.equal(CATALOG.filter(item => item.category === 'colors').length, 1);
+  assert.throws(() => progression.setColor('#aabbcc'), /zuerst/);
+  assert.equal(progression.setColor(null).equipped.color, null, 'paper never requires ownership');
+  const before = fund(progression).points;
+  progression.creditStar('color-star-history', 'living-star-1');
+  progression.purchase('upgrade:color');
+  const expected = before + 150 - 2000, record = progression.getProfile().highscore;
+  for (const color of ['#ABCDEF', '#000000', '#ffffff', '#123456']) {
+    const chosen = progression.setColor(color);
+    assert.equal(chosen.points, expected); assert.equal(chosen.equipped.color, color.toLowerCase());
+    assert.equal(chosen.highscore, record); assert.deepEqual(chosen.discoveredStarIds, ['living-star-1']);
+  }
+  const reloaded = createProgression(storage);
+  assert.equal(reloaded.getProfile().equipped.color, '#123456');
+  assert.equal(reloaded.setColor(null).points, expected);
+  assert.equal(reloaded.getProfile().equipped.color, null); assert(reloaded.getProfile().owned.includes('upgrade:color'));
+  assert.throws(() => reloaded.purchase('upgrade:color'), /bereits/);
+});
+
+test('old v2 profiles gain null color without losing their existing data or writing on read', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  fund(progression); progression.creditStar('old-color-profile', 'workshop-star-1'); progression.purchase('boost:lift');
+  const raw = JSON.parse(storage.data.get(PROFILE_KEY)); delete raw.equipped.color;
+  const previous = JSON.stringify(raw); storage.data.set(PROFILE_KEY, previous);
+  const migrated = createProgression(storage).getProfile();
+  assert.equal(migrated.version, 2); assert.equal(migrated.equipped.color, null);
+  assert.equal(migrated.points, raw.points); assert.deepEqual(migrated.owned, raw.owned);
+  assert.deepEqual(migrated.discoveredStarIds, raw.discoveredStarIds);
+  assert.equal(storage.data.get(PROFILE_KEY), previous);
+});
+
+test('invalid and failed color changes leave the saved equipment and money unchanged', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  fund(progression); progression.purchase('upgrade:color'); progression.setColor('#6699cc');
+  const before = progression.getProfile(), rawBefore = storage.data.get(PROFILE_KEY);
+  for (const color of ['red', '#fff', '#ff000080', ' #ff0000', '#xx0000', undefined, 123, {}]) assert.throws(() => progression.setColor(color), /Farbe/);
+  assert.deepEqual(progression.getProfile(), before); assert.equal(storage.data.get(PROFILE_KEY), rawBefore);
+  storage.fail = true;
+  assert.throws(() => progression.setColor('#cc6699'), /Speichern/);
+  assert.deepEqual(progression.getProfile(), before); assert.equal(storage.data.get(PROFILE_KEY), rawBefore);
+  storage.fail = false;
+  assert.equal(progression.setColor('#cc6699').equipped.color, '#cc6699');
+  assert.equal(progression.getProfile().points, before.points);
+});
+
+test('stored malformed or unowned custom color falls back safely to original paper', () => {
+  for (const [owned, color] of [[[], '#ff0000'], [['upgrade:color'], 'url(example)'], [['upgrade:color'], '#AABBCC']]) {
+    const storage = memoryStorage(), progression = createProgression(storage);
+    progression.setColor(null);
+    const raw = JSON.parse(storage.data.get(PROFILE_KEY)); raw.owned.push(...owned); raw.equipped.color = color;
+    storage.data.set(PROFILE_KEY, JSON.stringify(raw));
+    assert.equal(createProgression(storage).getProfile().equipped.color, color === '#AABBCC' ? '#aabbcc' : null);
+  }
 });

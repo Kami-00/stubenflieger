@@ -18,7 +18,8 @@ Ein 3D-Papierflieger-Spiel mit einem zusammenhängenden Haus: Keller, Erdgeschos
 
 Über **Online spielen · bis zu 5 Piloten** oder `/duel` einen Raum erstellen und den Link mit bis zu vier Freunden teilen. Zwei bis fünf Piloten spielen jeder gegen jeden. Der Link enthält nur die zufällige Raumkennung; die persönlichen Zugangsschlüssel bleiben in der jeweiligen Browsersitzung. Alle bestätigen ihre Bereitschaft, anschließend startet der Gastgeber den Countdown. So kann die Gruppe auf weitere Freunde warten. Nach einer Runde können die verbundenen Teilnehmer eine Revanche wählen und gemeinsam in der Lobby erneut starten.
 
-- Alle fliegen den Standardflieger bei 100 % mit 100 Lebenspunkten. Shopkäufe und der Solofortschritt beeinflussen die Runde nicht. Feste Farben verbinden die fünf Flieger mit ihren Lebensanzeigen.
+- Alle fliegen den Standardflieger bei 100 % mit 100 Lebenspunkten. Flugzeugformen, Größenupgrades und Boosts verändern den Mehrspielerflug nicht. Eigene Farben und gekaufte Effekte aus dem Solospiel sind vor dem Beitritt und in der Lobby auswählbar und für alle sichtbar. Ohne eigene Farbe gelten die bisherigen Spielerfarben; Lebensanzeigen und Schüsse behalten ihre feste Spielerfarbe.
+- Während einer Runde bleibt das gewählte Aussehen fest; Wiederverbindung und Revanche erhalten es. Jeder Pilot kann ausschließlich sein eigenes Aussehen ändern. Die Auswahl im Duell überschreibt die Solo-Ausrüstung nicht.
 - Die Startplätze liegen an vier weit getrennten Gartenpositionen und im Flur zur Haustür. Der kleinste Abstand beträgt etwa 14,57 Meter; die ersten beiden Spieler starten rund 30 Meter voneinander entfernt. Die ersten drei Flugsekunden sind ohne Hinderniskontakt möglich.
 - WASD/Pfeile steuern, die Leertaste feuert. Auf Touchgeräten gibt es einen Steuerknüppel und einen Feuerknopf.
 - Papiergeschosse verursachen 20 Schaden, Hindernisse 10 mit kurzer Erholung. Wände und geschlossene Türen halten Schüsse auf.
@@ -39,6 +40,7 @@ Alles wird einmal mit erspielten Punkten gekauft und bleibt freigeschaltet:
 - **Flugzeuge:** Klassiker, Gleiter, Pfeil und Kunstflieger mit unterschiedlichen Flugeigenschaften.
 - **Boosts:** Aufwind, Turbo, Sternmagnet und Luftpolster. Höchstens zwei ausrüsten, jeden einmal pro Run nutzen; der Kauf selbst wird nie verbraucht.
 - **Effekte:** Minzspur, Sternenstaub und Konfettispur.
+- **Farben:** Einmalig 2.000 Punkte für den Farbwähler. Danach beliebig viele kostenlose Farbwechsel mit Vorschau und Rückkehr zur ursprünglichen Papierfarbe. Gekauft wird die Funktion, keine einzelne Farbe.
 
 Guthaben, persönlicher Rekord, Käufe und Ausrüstung liegen im Browser auf diesem Gerät. Sie werden nicht mit anderen Geräten synchronisiert; gelöschte Website-Daten löschen auch das Profil. Schreibfehler werden angezeigt, ohne einen Kauf abzuziehen oder als gespeichert auszugeben. Run-Abrechnungen sind gegen doppelte Gutschrift geschützt. Ein in diesem Tab neu geladenes Spiel rechnet den letzten Zwischenstand aus dem Sitzungsspeicher ab; es setzt den Flug nicht fort.
 
@@ -65,10 +67,13 @@ Persönlicher Rekord und öffentliche Bestenliste verwenden die festen Werte der
 | Esc / P | Pausieren, fortsetzen oder Dialog schließen |
 | R | Run abrechnen und neu vorbereiten |
 | M / G / B / T | Menü / Shop vor oder nach dem Run / Bestenliste / Ton |
+| V / Schaltfläche Außen bzw. FPV | Zwischen Verfolgerkamera und Sicht aus dem Flugzeug wechseln, auch im Mehrspieler und beim Zuschauen |
 | Touch-Kreis | Ziehen zum Lenken und Steigen/Sinken |
 | Neigung | Nach Sensorfreigabe seitlich lenken, vor/zurück die Höhe steuern |
 
 Tab und Shift+Tab navigieren durch Schaltflächen. Dialoge halten den Fokus; Eingabefelder lösen keine Spielkürzel aus. Tab, Fokusverlust und versteckte Browserfenster pausieren einen laufenden Flug. Sensoren erfordern auf einem echten iPhone HTTPS und die ausdrückliche Browserfreigabe. Die Ansicht kann im Menü um jeweils 90° gedreht werden, unabhängig von der iPhone-Rotationssperre.
+
+FPV folgt Blickrichtung, Steigen/Sinken und Schräglage des Flugzeugs. Dabei wird nur das direkt verfolgte Modell verborgen; andere Piloten bleiben sichtbar. Die Kamera prüft Hindernisse, ändert keine Trefferflächen und behält ihre gewählte Ansicht beim Neuladen sowie beim Wechsel zwischen Solo und Mehrspieler.
 
 ## Aufbau
 
@@ -76,11 +81,14 @@ Tab und Shift+Tab navigieren durch Schaltflächen. Dialoge halten den Fokus; Ein
 - `src/aircraft.js`: gemeinsame sichtbare Geometrie und Kollisionsgeometrie mit geschlossener Mitte. Klassiker mit geraden Flügelenden, spitzer Pfeil, gerundeter Gleiter und rechteckiger Kunstflieger; der Shop zeigt die tatsächlichen Konturen.
 - `src/physics.js`: kontinuierliche Kollisionsprüfung, gedrehte Türblätter, großzügiger Sternfang über die Flügel und den zurückgelegten Flugweg; Wände und geschlossene Türen blockieren auch den Magneten.
 - `src/scene.js`: Darstellung der Hausgeometrie und Effekte. Kamerakorrekturen ändern keine Kollisionen.
+- `src/camera.js` / `src/view-mode.js`: gemeinsame Außen-/FPV-Kamera und gespeicherte Ansicht.
+- `src/cosmetics.js` / `src/aircraft-appearance.js` / `src/aircraft-effects.js`: geprüfte Farbwerte, Papierfaltung und voneinander unabhängige Flugspuren.
 - `src/run.js` / `src/flight.js`: Run-Fortschritt, Räume, Boostladungen und bidirektionale Aufwindhilfe.
 - `src/progression.js` / `src/shop.js`: dauerhaftes Profil und Shop.
 - `src/star-rewards.js`: stabile Sternidentitäten und gemeinsame Wertung für Browser und Server.
 - `src/duel-arena.js` / `src/duel-flight.js` / `src/duel-simulation.js`: feste Duell-Arena, Flugmodell und verbindliche Trefferberechnung.
-- `src/duel-client.js` / `src/duel-view.js`: Einladung, Steuerung, Lebensbalken und Darstellung der beiden Flieger.
+- `src/duel-client.js` / `src/duel-view.js`: Einladung, Steuerung, Lebensbalken und Darstellung von bis zu fünf Fliegern.
+- `src/duel-appearance.js`: Auswahl bereits freigeschalteter Farben/Effekte für den Mehrspieler.
 - `worker/duel-api.mjs` / `worker/duel-room.mjs`: geschützte Räume, WebSockets, Runden und Wiederverbindung.
 - `worker/index.mjs`: Haus-Bestenliste, Duell-Routen und unveränderte historische Level-API.
 
@@ -99,6 +107,10 @@ Die neue Spielszene verwendet die installierten Three.js- und Cannon-Abhängigke
 `test/star-browser.cjs` prüft mit einem echten Tastaturflug Erstfund, Wiederholungsfund, Entdeckungszähler, Sofortbonus, Reload-Abrechnung und einen fehlgeschlagenen Speichervorgang. `test/stairwell-continuity.test.mjs` prüft geschlossene Wandübergänge und freie Auf-/Abstiege aller Fliegerformen bei maximaler Größe.
 
 `test/scene-browser.cjs` rendert die echte Szene in einem isolierten lokalen Prüfaufbau: Alle drei Effekte müssen über tatsächlich beschattetem Rasen sichtbar bleiben und hinter einer deckenden Wand verschwinden. Bildvergleiche prüfen Gold/Silberblau und die Wertringe. Die Etagenwände reichen bis zum nächsten Stockwerk; der Flugschacht bleibt offen. Effekte behalten die Tiefenprüfung und werden nach dem Boden gezeichnet.
+
+`test/color-shop-browser.cjs` prüft den einmaligen Kauf des Farbwählers, die gemeinsame Papierfarbe von Vorschau und Modell, kostenlose Wechsel, Profilübernahme und Speicherfehler. `test/duel-cosmetics-browser.cjs` prüft mit getrennten Browsern die freigeschaltete Auswahl, gegenseitig sichtbare Lobbyfarben, bestätigte Rundendaten, einen verlorenen Farbwechsel mit Wiederverbindung, FPV-Schalter und mobile Layouts. `test/camera-render.test.mjs` prüft Blickrichtung, Kamerakollision, Zuschauerwechsel sowie getrennte Farben und Effektpuffer aller fünf Flugzeuge.
+
+`test/camera-effects-browser.cjs` prüft den ausgelieferten Solo-Perspektivwechsel und rendert zusätzlich fünf unabhängige Flugzeuge, das FPV-Zuschauen nach K. o. sowie eine Revanche mit den verbleibenden Spielern. Testzugriffe entstehen ausschließlich im lokalen Test-Bundle; die ausgelieferten Dateien enthalten keine Debugschnittstelle.
 
 Geprüft für die Hausfassung: alle 22 offenen Türen in beide Richtungen, drei offene Seitenfenster, freie Sammelpositionen für alle 96 Sterne auch mit dem kostenlosen Standardflieger, Untertisch-/Stuhlflug, schmale Lücken bei unterschiedlichen Größen, schnelle Wandkontakte, Auf- und Abstieg im Treppenschacht, dauerhafte Käufe, Speicherfehler, Größenregler, zwei Boostplätze, Reload-Abrechnung und Tastaturfokus. Shopdarstellung wurde bei 320 und 390 Pixel Breite, im Querformat und am Desktop geprüft.
 

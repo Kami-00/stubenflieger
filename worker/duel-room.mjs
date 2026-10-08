@@ -1,5 +1,5 @@
 import { createDuelSimulation, DUEL_RULES } from '../src/duel-simulation.js';
-import { duelJson, duelName, readDuelJson, hashSecret, constantEqual, TOKEN_PATTERN, ROOM_PATTERN } from './duel-api.mjs';
+import { duelJson, duelName, duelAppearance, readDuelJson, hashSecret, constantEqual, TOKEN_PATTERN, ROOM_PATTERN } from './duel-api.mjs';
 
 export const DUEL_TIMING = Object.freeze({ tickMs: 1000 / 30, snapshotMs: 100, countdownMs: 3000, reconnectMs: 20_000, staleInputMs: 500, ghostMs: 15_000, idleMs: 600_000, absoluteMs: 7_200_000, maxCatchup: 5 });
 const ACTIVE = new Set(['countdown', 'playing', 'reconnecting']);
@@ -25,7 +25,7 @@ export class DuelRoom {
       if (!this.record) { await ctx.storage.deleteAll(); this.schemaReady = false; return; }
       this.playedMs = this.record.playedMs || 0;
       const recovered = copy(this.record); recovered.hostId ||= recovered.players[0]?.id || PLAYER_IDS[0];
-      for (const player of recovered.players) { player.connected = false; player.left ||= false; player.eliminated ||= false; }
+      for (const player of recovered.players) { player.connected = false; player.left ||= false; player.eliminated ||= false; player.appearance = duelAppearance(player.appearance); }
       for (const ws of ctx.getWebSockets()) {
         const attachment = ws.deserializeAttachment();
         const player = recovered.players.find(p => !p.left && p.id === attachment?.slot && p.connectionId === attachment?.connectionId);
@@ -43,15 +43,22 @@ export class DuelRoom {
   }
   ensureSchema() { if (!this.schemaReady) { this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS duel_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)'); this.schemaReady = true; } }
   commit(record) { this.ensureSchema(); this.ctx.storage.sql.exec('INSERT OR REPLACE INTO duel_state (key, value) VALUES (?, ?)', 'room', JSON.stringify(record)); this.record = record; }
+  publicSnapshot(snapshot) {
+    if (!snapshot) return null;
+    // Appearance is room metadata. Never feed it into authoritative flight,
+    // collision, weapon, or health state supplied by the shared simulation.
+    const appearances = new Map(this.record.players.map(p => [p.id, p.appearance]));
+    return { ...snapshot, players: snapshot.players.map(p => ({ ...p, appearance: duelAppearance(appearances.get(p.id)) })) };
+  }
   state(now = Date.now()) {
     const r = this.record;
     if (!r) return { type: 'state', phase: 'expired', players: [], countdown: 0, remaining: 0, snapshot: null, expiresAt: now };
     return {
       type: 'state', phase: r.phase, hostId: r.hostId || PLAYER_IDS[0],
-      players: r.players.map(({ id, name, connected, ready, rematch, left, eliminated }) => ({ id, name, connected, ready, rematch: !!rematch, left: !!left, eliminated: !!eliminated })),
+      players: r.players.map(({ id, name, connected, ready, rematch, left, eliminated, appearance }) => ({ id, name, connected, ready, rematch: !!rematch, left: !!left, eliminated: !!eliminated, appearance: duelAppearance(appearance) })),
       countdown: r.phase === 'countdown' ? Math.max(0, (r.countdownUntil - now) / 1000) : 0,
       remaining: Math.max(0, (DUEL_RULES.roundSeconds || 180) - this.playedMs / 1000),
-      snapshot: this.sim?.snapshot() || r.snapshot || null,
+      snapshot: this.publicSnapshot(this.sim?.snapshot() || r.snapshot || null),
       winner: r.winner || null, reason: r.reason || null,
       expiresAt: Math.min(r.createdAt + DUEL_TIMING.absoluteMs, r.lastActivity + DUEL_TIMING.idleMs),
     };
@@ -60,6 +67,11 @@ export class DuelRoom {
   broadcast() { const state = this.state(); for (const { ws } of this.sockets.values()) this.send(ws, state); }
   expired(now = Date.now()) { const r = this.record; return !r || now >= r.createdAt + DUEL_TIMING.absoluteMs || now >= r.lastActivity + DUEL_TIMING.idleMs; }
   clearInputs() { this.inputs = Object.fromEntries((this.record?.players || []).map(p => [p.id, neutral()])); }
+  updateAppearance(slot, appearance) {
+    const player = this.record.players.find(p => p.id === slot);
+    if (player.appearance?.color === appearance.color && player.appearance?.effect === appearance.effect) return;
+    const r = copy(this.record); r.players.find(p => p.id === slot).appearance = appearance; r.lastActivity = Date.now(); this.commit(r);
+  }
   participants() { return this.record.players.filter(p => !p.left); }
   living() {
     const simulated = this.sim?.snapshot().players;
@@ -129,17 +141,17 @@ export class DuelRoom {
       return new Response(null, { status: 101, webSocket: client });
     }
     if (request.method !== 'POST') return duelJson({ error: 'Methode nicht erlaubt.' }, 405);
-    let input, name;
-    try { input = await readDuelJson(request); name = duelName(input.name); if (!ROOM_PATTERN.test(input.room || '')) throw new Error('Ungültiger Raum.'); if (input.token !== undefined && !TOKEN_PATTERN.test(input.token)) throw new Error('Ungültiger Zugang.'); }
+    let input, name, appearance;
+    try { input = await readDuelJson(request); name = duelName(input.name); appearance = duelAppearance(input.appearance); if (!ROOM_PATTERN.test(input.room || '')) throw new Error('Ungültiger Raum.'); if (input.token !== undefined && !TOKEN_PATTERN.test(input.token)) throw new Error('Ungültiger Zugang.'); }
     catch (error) { return duelJson({ error: error.message }, 400); }
     // Finish asynchronous crypto before reading/reserving a seat, so two joins
     // cannot both observe the same free seat across an await boundary.
     const credential = action === 'join' && input.token ? input.token : token(), digest = await hashSecret(credential), now = Date.now();
     if (action === 'create') {
       if (this.record) return duelJson({ error: 'Dieser Raum existiert bereits.' }, 409);
-      const r = { room: input.room, origin: url.origin, hostId: PLAYER_IDS[0], createdAt: now, lastActivity: now, phase: 'lobby', winner: null, reason: null, snapshot: null, players: [{ id: PLAYER_IDS[0], name, tokenHash: digest, connected: false, ready: false, rematch: false, left: false, eliminated: false, connectionId: null, lobbyUntil: now + DUEL_TIMING.reconnectMs }] };
+      const r = { room: input.room, origin: url.origin, hostId: PLAYER_IDS[0], createdAt: now, lastActivity: now, phase: 'lobby', winner: null, reason: null, snapshot: null, players: [{ id: PLAYER_IDS[0], name, appearance, tokenHash: digest, connected: false, ready: false, rematch: false, left: false, eliminated: false, connectionId: null, lobbyUntil: now + DUEL_TIMING.reconnectMs }] };
       this.commit(r); await this.scheduleAlarm();
-      return duelJson({ room: r.room, token: credential, slot: PLAYER_IDS[0], inviteUrl: `/duel#room=${r.room}`, expiresAt: this.state(now).expiresAt }, 201);
+      return duelJson({ room: r.room, token: credential, slot: PLAYER_IDS[0], appearance, inviteUrl: `/duel#room=${r.room}`, expiresAt: this.state(now).expiresAt }, 201);
     }
     if (this.expired(now)) { if (this.record) await this.expire(); return duelJson({ error: 'Dieser Raum ist abgelaufen.' }, 410); }
     if (this.record.origin !== url.origin || this.record.room !== input.room) return duelJson({ error: 'Ungültiger Raum.' }, 403);
@@ -148,14 +160,17 @@ export class DuelRoom {
     if (input.token) {
       seat = this.record.players.find(p => !p.left && constantEqual(p.tokenHash, digest));
       if (!seat) return duelJson({ error: 'Dieser Zugang gehört nicht zum Raum.' }, 403);
+      // A resumed active round keeps its original cosmetics even when a newer
+      // local profile is sent. Omission also preserves the previous choice.
+      if (this.record.phase === 'lobby' && input.appearance !== undefined) { this.updateAppearance(seat.id, appearance); this.broadcast(); }
     } else {
       const available = PLAYER_IDS.find(id => !this.record.players.some(p => p.id === id));
       if (this.record.phase !== 'lobby' || !available) return duelJson({ error: 'Der Raum ist voll oder die Runde hat bereits begonnen.' }, 409);
-      seat = { id: available, name, tokenHash: digest, connected: false, ready: false, rematch: false, left: false, eliminated: false, connectionId: null, lobbyUntil: now + DUEL_TIMING.reconnectMs };
+      seat = { id: available, name, appearance, tokenHash: digest, connected: false, ready: false, rematch: false, left: false, eliminated: false, connectionId: null, lobbyUntil: now + DUEL_TIMING.reconnectMs };
       const r = copy(this.record); r.players.push(seat); r.players.forEach(p => { p.ready = false; }); this.selectHost(r); r.lastActivity = now; this.commit(r); this.inputs[seat.id] = neutral(); this.broadcast();
     }
     await this.scheduleAlarm();
-    return duelJson({ room: this.record.room, token: credential, slot: seat.id, expiresAt: this.state(now).expiresAt });
+    return duelJson({ room: this.record.room, token: credential, slot: seat.id, appearance: duelAppearance(this.record.players.find(p => p.id === seat.id).appearance), expiresAt: this.state(now).expiresAt });
   }
   attach(ws, slot) {
     const now = Date.now(), old = this.sockets.get(slot), connectionId = crypto.randomUUID();
@@ -196,6 +211,14 @@ export class DuelRoom {
       return;
     }
     if (data.type === 'leave') { await this.leave(ws); return; }
+    if (data.type === 'appearance') {
+      if (this.record.phase !== 'lobby') { this.send(ws, { type: 'error', message: 'Farbe und Effekt lassen sich nur in der Lobby ändern.' }); return; }
+      try {
+        if (!Object.hasOwn(data, 'appearance') || Object.keys(data).some(key => key !== 'type' && key !== 'appearance')) throw new Error('Ungültiges Flugzeug-Aussehen.');
+        this.updateAppearance(slot, duelAppearance(data.appearance));
+      } catch (error) { this.send(ws, { type: 'error', message: error.message }); return; }
+      this.broadcast(); await this.scheduleAlarm(); return;
+    }
     if (data.type === 'ready' && typeof data.ready === 'boolean' && ['lobby', 'countdown'].includes(this.record.phase)) {
       const r = copy(this.record); r.players.find(p => p.id === slot).ready = data.ready; r.lastActivity = now;
       this.commit(r);

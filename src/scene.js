@@ -2,14 +2,17 @@ import {
   WebGLRenderer, Scene, Color, Fog, PerspectiveCamera, HemisphereLight,
   DirectionalLight, PointLight, MeshStandardMaterial, MeshBasicMaterial,
   Mesh, InstancedMesh, BoxGeometry, Vector3, Euler, Quaternion, Matrix4,
-  Group, Shape, ExtrudeGeometry, TorusGeometry, BufferGeometry, BufferAttribute,
-  Float32BufferAttribute, Line, LineBasicMaterial, CanvasTexture,
+  Group, Shape, ExtrudeGeometry, TorusGeometry, BufferGeometry,
+  Float32BufferAttribute, CanvasTexture,
   RepeatWrapping, PCFShadowMap, SRGBColorSpace,
   ACESFilmicToneMapping, DoubleSide,
 } from 'three';
 import { HOUSE, FLOORS, getRoomAt, getDoorPose } from './house.js';
 import { getAircraftDefinition } from './aircraft.js';
 import { getStarReward } from './star-rewards.js';
+import { normalizeAircraftColor } from './cosmetics.js';
+import { applyAircraftColor } from './aircraft-appearance.js';
+import { createAircraftEffects } from './aircraft-effects.js';
 
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 const STRUCTURE = new Set(['wall', 'floor', 'roof']);
@@ -102,30 +105,21 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   }
   const plane = new Group(); plane.name = 'Papierflieger'; scene.add(plane);
   const aircraftMaterials = new Set(), aircraftGeometries = new Set();
-  let effect = 'none', aircraftForm = 'classic', aircraftSize = 1;
-  const trailCount = 54, trailPositions = new Float32Array(trailCount * 3);
-  const trailGeometry = new BufferGeometry(); trailGeometry.setAttribute('position', new BufferAttribute(trailPositions, 3)); geometries.add(trailGeometry);
-  // Dynamic world-space geometry has no useful fixed sorting centre. Draw its
-  // transparent pass after the ground, while retaining real wall/floor depth.
-  const trail = new Line(trailGeometry, new LineBasicMaterial({ color: '#fff2d0', transparent: true, opacity: .75, depthTest: true, depthWrite: false, toneMapped: false })); trail.frustumCulled = false; trail.renderOrder = 20; scene.add(trail);
-  const particles = new InstancedMesh(boxGeometry, new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: .9, depthTest: true, depthWrite: false, toneMapped: false }), 28);
-  particles.frustumCulled = false; particles.visible = false; particles.renderOrder = 20; scene.add(particles);
-  function setAircraft(form = 'classic', size = 1, nextEffect = 'none') {
-    const definition = getAircraftDefinition(form, size); aircraftForm = definition.form; aircraftSize = definition.size; effect = nextEffect || 'none';
+  let aircraftForm = 'classic', aircraftSize = 1, aircraftColor = null;
+  const effects = createAircraftEffects(scene);
+  function setAircraft(form = 'classic', size = 1, nextEffect = 'none', color = null) {
+    const definition = getAircraftDefinition(form, size); aircraftForm = definition.form; aircraftSize = definition.size; aircraftColor = normalizeAircraftColor(color);
     for (const geometry of aircraftGeometries) geometry.dispose(); aircraftGeometries.clear(); for (const mat of aircraftMaterials) mat.dispose(); aircraftMaterials.clear(); plane.clear();
     for (const part of definition.parts) {
       const vertices = [];
       for (const face of part.faces) for (let i = 1; i + 1 < face.length; i++) for (const index of [face[0], face[i], face[i + 1]]) vertices.push(...part.vertices[index]);
       const geometry = new BufferGeometry(); geometry.setAttribute('position', new Float32BufferAttribute(vertices, 3)); geometry.computeVertexNormals();
-      const mat = new MeshStandardMaterial({ color: part.color, roughness: .77, side: DoubleSide, flatShading: true }); const mesh = new Mesh(geometry, mat); mesh.name = part.id; mesh.castShadow = mesh.receiveShadow = true; plane.add(mesh); aircraftGeometries.add(geometry); aircraftMaterials.add(mat);
+      const mat = new MeshStandardMaterial({ color: part.color, roughness: .77, side: DoubleSide, flatShading: true }); const mesh = new Mesh(geometry, mat); mesh.name = part.id; mesh.userData.paperColor = part.color; mesh.castShadow = mesh.receiveShadow = true; plane.add(mesh); aircraftGeometries.add(geometry); aircraftMaterials.add(mat);
     }
-    trail.material.color.set(effect === 'confetti' ? '#c598e8' : effect === 'spark' ? '#e9bd5e' : effect === 'mint' ? '#80d6ba' : '#fcf1ce'); trail.visible = effect === 'mint' || effect === 'spark';
-    particles.visible = effect === 'spark' || effect === 'confetti';
-    for (let i = 0; i < 28; i++) particles.setColorAt(i, new Color(effect === 'confetti' ? ['#d58c7e', '#79c6b2', '#e9c774', '#a7a0d6'][i % 4] : '#f7d581'));
-    particles.instanceColor.needsUpdate = true; return definition;
+    applyAircraftColor(plane, aircraftColor); effects.setEffect(nextEffect); effects.clear(); return definition;
   }
-  function resetTrail(position = house.start) { for (let i = 0; i < trailCount; i++) { trailPositions[i * 3] = position.x; trailPositions[i * 3 + 1] = position.y; trailPositions[i * 3 + 2] = position.z; } trailGeometry.attributes.position.needsUpdate = true; }
-  function updateTrail(position) { trailPositions.copyWithin(3, 0, trailPositions.length - 3); trailPositions[0] = position.x; trailPositions[1] = position.y; trailPositions[2] = position.z; trailGeometry.attributes.position.needsUpdate = true; }
+  function resetTrail(position = house.start) { effects.reset(position); }
+  function updateTrail(position) { effects.push(position); }
   setAircraft(); resetTrail(); plane.position.set(house.start.x, house.start.y, house.start.z);
   const sling = new Group(); sling.position.set(house.start.x, 0, house.start.z); scene.add(sling);
   const launchRingGeometry = new TorusGeometry(.23, .014, 5, 28); geometries.add(launchRingGeometry);
@@ -209,30 +203,21 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
     for (let i = 0; i < blockMeshes.length; i++) { blockMeshes[i].position.copy(physics.blocks[i].body.position); blockMeshes[i].quaternion.copy(physics.blocks[i].body.quaternion); }
     softLight.position.set(position.x, position.y + .6, position.z); softLight.intensity = room?.floor === 'ug' ? 7 : 3;
     sun.target.position.set(position.x, 1, position.z); sun.target.updateMatrixWorld(); sun.position.set(position.x - 12, 24, position.z - 14);
-    if (effect === 'spark' || effect === 'confetti') {
-      const moving = Math.hypot(trailPositions[0] - trailPositions[18], trailPositions[1] - trailPositions[19], trailPositions[2] - trailPositions[20]) > .035;
-      particles.visible = moving;
-      for (let i = 0; i < 28; i++) {
-        const index = Math.min(trailCount - 1, 2 + i) * 3, fade = 1 - i / 32;
-        const size = (effect === 'confetti' ? .037 : .022) * fade * (effect === 'spark' ? .6 + .4 * Math.sin(elapsed * 8 + i) ** 2 : 1);
-        const p = new Vector3(trailPositions[index] + Math.sin(i * 2.4) * .045, trailPositions[index + 1] + Math.cos(i * 1.7) * .035 - i * .001, trailPositions[index + 2]);
-        matrix.compose(p, quaternion.setFromEuler(euler.set(elapsed * 2 + i, i * .7, elapsed * 1.4 + i)), new Vector3(size, effect === 'confetti' ? size * .22 : size, size)); particles.setMatrixAt(i, matrix);
-      }
-      particles.instanceMatrix.needsUpdate = true;
-    }
+    effects.update(dt, elapsed);
     updateCeiling(position);
   }
   function resize() { const viewport = getViewport() || {}; const width = Math.max(1, viewport.width || canvas.clientWidth || 1), height = Math.max(1, viewport.height || canvas.clientHeight || 1); renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); }
   function render() { renderer.render(scene, camera); }
   resize(); window.addEventListener('gameviewportchange', resize);
   function dispose() {
+    effects.dispose();
     window.removeEventListener('gameviewportchange', resize); const allMaterials = new Set([...materials.values(), ...aircraftMaterials]), allGeometries = new Set([...geometries, ...aircraftGeometries]);
     scene.traverse(object => { if (object.geometry) allGeometries.add(object.geometry); if (object.material) for (const mat of Array.isArray(object.material) ? object.material : [object.material]) allMaterials.add(mat); if (object.shadow?.map) object.shadow.map.dispose(); });
     for (const geometry of allGeometries) geometry.dispose(); for (const mat of allMaterials) mat.dispose(); for (const texture of textures) texture.dispose(); scene.clear(); renderer.dispose();
   }
   return {
-    renderer, scene, camera, plane, sling, thermals: house.thermals, update, setAircraft, setDoorOpen, collectStars, resetCollectibles, resetTrail, updateTrail, updateSling, updateCeiling, warnings, render, resize, dispose,
-    totalCollectibles: starMeshes.length, get collected() { return starMeshes.filter(item => item.collected).length; }, get aircraft() { return { form: aircraftForm, size: aircraftSize, effect }; },
+    renderer, scene, camera, plane, sling, effects, thermals: house.thermals, update, setAircraft, setDoorOpen, collectStars, resetCollectibles, resetTrail, updateTrail, updateSling, updateCeiling, warnings, render, resize, dispose,
+    totalCollectibles: starMeshes.length, get collected() { return starMeshes.filter(item => item.collected).length; }, get aircraft() { return { form: aircraftForm, size: aircraftSize, effect: effects.effect, color: aircraftColor }; },
     sync: () => update(1 / 60, 0), wind: elapsed => update(1 / 60, elapsed), collect: position => collectStars(item => Math.hypot(item.x - position.x, item.y - position.y, item.z - position.z) <= item.radius).length,
   };
 }

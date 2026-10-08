@@ -73,7 +73,7 @@ const { chromium } = require('playwright');
     const expectedPoints = initial.points - CATALOG.filter(item => purchased.includes(item.id)).reduce((sum, item) => sum + item.price, 0);
     let saved = await profile();
     assert.equal(saved.points, expectedPoints); assert.equal(saved.highscore, initial.highscore);
-    assert.deepEqual(saved.equipped, { form: 'glider', effect: 'mint', boosts: ['turbo', 'magnet'], size: 1.5 });
+    assert.deepEqual(saved.equipped, { form: 'glider', effect: 'mint', boosts: ['turbo', 'magnet'], size: 1.5, color: null });
     assert.equal(saved.useDoorUnlocks, false);
     checks.push('Permanent purchases, exact wallet deduction, unchanged record, equipment and two boost slots');
     await page.reload(); await ready(); await openShop();

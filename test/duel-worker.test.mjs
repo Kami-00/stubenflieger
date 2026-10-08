@@ -40,16 +40,16 @@ function socket() {
     close(code, reason) { this.readyState = 3; this.closed = { code, reason }; },
   };
 }
-async function roomFixture() {
+async function roomFixture(appearance) {
   const ctx = context(), room = new DuelRoom(ctx, {}); await room.ready;
-  const created = await room.fetch(request('/internal/duel/create', { room: id, name: 'Pilot Eins' }));
+  const created = await room.fetch(request('/internal/duel/create', { room: id, name: 'Pilot Eins', appearance }));
   const host = await created.json(); return { room, ctx, host, created };
 }
-async function groupFixture(count = 2) {
-  const fixture = await roomFixture();
+async function groupFixture(count = 2, appearances = {}) {
+  const fixture = await roomFixture(appearances.p1);
   const credentials = { p1: fixture.host }, connections = {};
   for (let i = 2; i <= count; i++) {
-    const joined = await fixture.room.fetch(request('/internal/duel/join', { room: id, name: `Pilot ${i}` })); credentials[`p${i}`] = await joined.json();
+    const joined = await fixture.room.fetch(request('/internal/duel/join', { room: id, name: `Pilot ${i}`, appearance: appearances[`p${i}`] })); credentials[`p${i}`] = await joined.json();
   }
   for (const slot of Object.keys(credentials)) { connections[slot] = socket(); fixture.room.attach(connections[slot], slot); }
   return { ...fixture, ...connections, connections, credentials, guest: credentials.p2 };
@@ -341,4 +341,85 @@ test('an emptied lobby elects a new host when two new pilots use the existing in
     assert.equal(f.room.record.hostId, 'p1'); assert.equal(f.room.state().hostId, 'p1');
     await start(f); assert.equal(f.room.record.phase, 'countdown'); assert.equal(f.room.sim.snapshot().players.length, 2);
   }
+});
+
+const appearances = {
+  p1: { color: '#AABBCC', effect: 'mint' }, p2: { color: '#E26434', effect: 'spark' },
+  p3: { color: '#1188DD', effect: 'confetti' }, p4: { color: null, effect: 'none' }, p5: { color: '#55AA77', effect: 'mint' },
+};
+const normalizedAppearances = Object.fromEntries(Object.entries(appearances).map(([id, a]) => [id, { ...a, color: a.color?.toLowerCase() ?? null }]));
+const publicAppearances = players => Object.fromEntries(players.map(p => [p.id, p.appearance]));
+
+test('all five clients receive normalized appearance metadata in lobby and simulation snapshots', async t => {
+  const f = await groupFixture(5, appearances); t.after(() => f.room.stopLoop());
+  for (const ws of Object.values(f.connections)) assert.deepEqual(publicAppearances(ws.sent.at(-1).players), normalizedAppearances);
+  await start(f);
+  assert.deepEqual(publicAppearances(f.room.state().snapshot.players), normalizedAppearances);
+  assert.deepEqual(f.room.state().snapshot.players.map(({ appearance, ...physical }) => physical), f.room.sim.snapshot().players, 'cosmetics never enter or change authoritative physical state');
+  const exposed = f.room.state(); exposed.players[0].appearance.color = '#000000'; exposed.snapshot.players[0].appearance.effect = 'none';
+  assert.deepEqual(f.room.state().players[0].appearance, normalizedAppearances.p1);
+});
+
+test('only the authenticated slot can edit appearance in the lobby and foreign fields are rejected', async t => {
+  const f = await groupFixture(3, appearances); t.after(() => f.room.stopLoop());
+  const desired = { color: '#ABC123', effect: 'confetti' };
+  await message(f.room, f.p2, { type: 'appearance', slot: 'p1', appearance: desired });
+  assert.equal(f.p2.sent.at(-1).type, 'error'); assert.deepEqual(f.room.state().players[0].appearance, normalizedAppearances.p1);
+  await message(f.room, f.p2, { type: 'appearance', appearance: desired });
+  assert.deepEqual(f.room.state().players.find(p => p.id === 'p2').appearance, { color: '#abc123', effect: 'confetti' });
+  assert.deepEqual(f.room.state().players.find(p => p.id === 'p3').appearance, normalizedAppearances.p3);
+  for (const appearance of [null, [], '#aabbcc', { color: '#abc' }, { color: '#abcdef00' }, { color: 'red' }, { color: 123 }, { effect: 'gold' }, { effect: null }, { color: '#123456', speed: 99 }, { hp: 999 }]) {
+    await message(f.room, f.p2, { type: 'appearance', appearance }); assert.equal(f.p2.sent.at(-1).type, 'error');
+    assert.deepEqual(f.room.state().players.find(p => p.id === 'p2').appearance, { color: '#abc123', effect: 'confetti' });
+  }
+  const forged = socket(); forged.serializeAttachment({ slot: 'p1', connectionId: f.p1.attachment.connectionId });
+  await message(f.room, forged, { type: 'appearance', appearance: desired }); assert.equal(forged.closed.code, 4009);
+  assert.deepEqual(f.room.state().players[0].appearance, normalizedAppearances.p1);
+});
+
+test('countdown, active reconnect and rematch preserve the round cosmetics for sparse player IDs', async t => {
+  const time = clock(t), f = await groupFixture(5, appearances); t.after(() => f.room.stopLoop());
+  await message(f.room, f.p2, { type: 'leave' }); await message(f.room, f.p4, { type: 'leave' }); await start(f);
+  const expected = Object.fromEntries(['p1', 'p3', 'p5'].map(id => [id, normalizedAppearances[id]]));
+  await message(f.room, f.p3, { type: 'appearance', appearance: { color: '#000000', effect: 'none' } }); assert.equal(f.p3.sent.at(-1).type, 'error');
+  assert.deepEqual(publicAppearances(f.room.state().snapshot.players), expected);
+  time.advance(3001); await f.room.pulse(time.now); f.room.stopLoop();
+  await f.room.webSocketClose(f.p3); f.room.stopLoop();
+  const resumed = await f.room.fetch(request('/internal/duel/join', { room: id, name: 'Pilot 3', token: f.credentials.p3.token, appearance: { color: '#000000', effect: 'none' } }));
+  assert.equal(resumed.status, 200); assert.deepEqual((await resumed.json()).appearance, normalizedAppearances.p3);
+  const replacement = socket(); f.room.attach(replacement, 'p3'); f.room.stopLoop();
+  assert.equal(f.room.record.phase, 'playing'); assert.deepEqual(publicAppearances(f.room.state().snapshot.players), expected);
+  await message(f.room, replacement, { type: 'appearance', appearance: { color: '#000000', effect: 'none' } }); assert.equal(replacement.sent.at(-1).type, 'error');
+  f.room.finish('p5', 'time');
+  for (const id of ['p1', 'p3', 'p5']) await message(f.room, f.room.sockets.get(id).ws, { type: 'rematch' });
+  assert.equal(f.room.record.phase, 'lobby'); assert.deepEqual(publicAppearances(f.room.state().players), expected);
+  await start(f); assert.deepEqual(publicAppearances(f.room.state().snapshot.players), expected);
+});
+
+test('appearance survives hibernation and old rooms default safely without new storage migration', async t => {
+  const f = await groupFixture(5, appearances); t.after(() => f.room.stopLoop());
+  const recovered = new DuelRoom(f.ctx, {}); await recovered.ready; t.after(() => recovered.stopLoop());
+  assert.deepEqual(publicAppearances(recovered.state().players), normalizedAppearances);
+  const old = structuredClone(recovered.record); delete old.players[0].appearance; recovered.commit(old);
+  const legacy = new DuelRoom(f.ctx, {}); await legacy.ready; t.after(() => legacy.stopLoop());
+  assert.deepEqual(legacy.state().players[0].appearance, { color: null, effect: 'none' });
+  await start({ room: legacy }); legacy.finish('p5', 'time');
+  const finished = new DuelRoom(f.ctx, {}); await finished.ready; t.after(() => finished.stopLoop());
+  assert.deepEqual(finished.state().snapshot.players.find(p => p.id === 'p5').appearance, normalizedAppearances.p5);
+});
+
+test('HTTP appearance validation runs before routing, defaults old clients and resumes only the owner', async t => {
+  let touched = 0;
+  const invalidEnv = { DUEL_ROOMS: { getByName() { touched++; } }, DUEL_LIMITS: { getByName() { touched++; } } };
+  for (const appearance of [null, { color: 'red' }, { effect: 'rainbow' }, { color: '#123456', size: .1 }]) {
+    assert.equal((await handleDuelRequest(request('/api/duels', { name: 'Pilot', appearance }), invalidEnv)).status, 400);
+  }
+  assert.equal(touched, 0);
+  const f = await pairFixture(); t.after(() => f.room.stopLoop()); assert.deepEqual(f.host.appearance, { color: null, effect: 'none' });
+  const update = await f.room.fetch(request('/internal/duel/join', { room: id, name: 'Pilot', token: f.guest.token, appearance: appearances.p2 }));
+  assert.equal(update.status, 200); assert.deepEqual(f.room.state().players.find(p => p.id === 'p2').appearance, normalizedAppearances.p2);
+  const omit = await f.room.fetch(request('/internal/duel/join', { room: id, name: 'Pilot', token: f.guest.token }));
+  assert.deepEqual((await omit.json()).appearance, normalizedAppearances.p2);
+  const badToken = await f.room.fetch(request('/internal/duel/join', { room: id, name: 'Pilot', token: 'a'.repeat(43), appearance: appearances.p1 }));
+  assert.equal(badToken.status, 403); assert.deepEqual(f.room.state().players[0].appearance, { color: null, effect: 'none' });
 });

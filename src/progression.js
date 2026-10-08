@@ -1,11 +1,13 @@
 import { HOUSE } from './house.js';
 import { calculateStarPoints, getStarReward } from './star-rewards.js';
+import { normalizeAircraftColor } from './cosmetics.js';
 
 export const ROOM_BONUS = 250;
 export const PROFILE_KEY = 'stubenflieger.house-profile.v1';
 export const SIZE_RANGE = Object.freeze({ min: .55, max: 1.5, step: .05 });
 const baseItems = [
   { id: 'upgrade:size', category: 'upgrades', name: 'Verstellbare Größe', price: 1800, description: '55–150 %: Groß gleitet länger, klein kurvt enger und passt durch kleine Lücken. Die Hitbox wächst mit.' },
+  { id: 'upgrade:color', category: 'colors', name: 'Eigene Flugzeugfarbe', price: 2000, description: 'Einmal freischalten, danach jede Farbe kostenlos wählen. Die Original-Papierfarbe kannst du jederzeit wiederherstellen.' },
   { id: 'boost:lift', category: 'boosts', name: 'Aufwind', price: 800, description: 'Ein kurzer Höhengewinn. Ein Einsatz in jedem Run.' },
   { id: 'boost:turbo', category: 'boosts', name: 'Turbo', price: 1000, description: 'Kurzer Geschwindigkeitsschub. Ein Einsatz in jedem Run.' },
   { id: 'boost:magnet', category: 'boosts', name: 'Sternmagnet', price: 1400, description: 'Zieht nahe, frei erreichbare Sterne an. Ein Einsatz in jedem Run.' },
@@ -43,7 +45,7 @@ export function calculateRunScore(summary = {}) {
 
 function emptyProfile() {
   return { version: 2, points: 0, highscore: 0, owned: ['plane:classic', 'effect:none'],
-    equipped: { form: 'classic', effect: 'none', boosts: [], size: 1 }, useDoorUnlocks: true, creditedRuns: [], discoveredStarIds: [] };
+    equipped: { form: 'classic', effect: 'none', boosts: [], size: 1, color: null }, useDoorUnlocks: true, creditedRuns: [], discoveredStarIds: [] };
 }
 
 function parseProfile(raw) {
@@ -63,7 +65,9 @@ function parseProfile(raw) {
   const effect = items.has(`effect:${equipped.effect}`) && owned.includes(`effect:${equipped.effect}`) ? equipped.effect : 'none';
   const boosts = [...new Set(Array.isArray(equipped.boosts) ? equipped.boosts : [])].filter(id => items.has(`boost:${id}`) && owned.includes(`boost:${id}`)).slice(0, 2);
   const size = owned.includes('upgrade:size') && Number.isFinite(equipped.size) ? Math.min(SIZE_RANGE.max, Math.max(SIZE_RANGE.min, equipped.size)) : 1;
-  return { version: 2, points: profile.points, highscore: profile.highscore, owned, equipped: { form, effect, boosts, size },
+  let color = null;
+  if (owned.includes('upgrade:color')) { try { color = normalizeAircraftColor(equipped.color ?? null); } catch {} }
+  return { version: 2, points: profile.points, highscore: profile.highscore, owned, equipped: { form, effect, boosts, size, color },
     useDoorUnlocks: profile.useDoorUnlocks !== false, creditedRuns: [...new Set(profile.creditedRuns)],
     // V1 stored no star history. Keep retired IDs so a later house update cannot repay them.
     discoveredStarIds: profile.version === 2 ? [...new Set(profile.discoveredStarIds)] : [] };
@@ -110,6 +114,10 @@ export function createProgression(storage) {
     },
     equipForm(form) { return change(next => { requireOwned(next, `plane:${form}`); next.equipped.form = form; }); },
     equipEffect(effect) { return change(next => { requireOwned(next, `effect:${effect}`); next.equipped.effect = effect; }); },
+    setColor(color) {
+      color = normalizeAircraftColor(color);
+      return change(next => { if (color !== null) requireOwned(next, 'upgrade:color'); next.equipped.color = color; });
+    },
     equipBoosts(boosts) {
       return change(next => {
         if (!Array.isArray(boosts) || boosts.length > 2 || new Set(boosts).size !== boosts.length) throw new Error('Wähle höchstens zwei verschiedene Boosts.');

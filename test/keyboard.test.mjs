@@ -11,7 +11,7 @@ function setup(t,{state='ready',dialog=null,acceptCharge=true}={}){
  const window=new EventTarget(),document=new EventTarget(),keys=new Set(),calls=[];
  document.hidden=false;
  const launcher=element('button'),body=element();
- const actions=Object.fromEntries(['cancelCharge','release','quickLaunch','pause','reset','menu','closeMenu','board','closeBoard','sound','suspend','shop','closeShop'].map(name=>[name,()=>{calls.push(name);} ]));
+ const actions=Object.fromEntries(['cancelCharge','release','quickLaunch','pause','reset','menu','closeMenu','board','closeBoard','sound','suspend','shop','closeShop','camera'].map(name=>[name,()=>{calls.push(name);} ]));
  actions.boost=index=>calls.push(`boost:${index}`);
  actions.beginCharge=()=>{calls.push('beginCharge');return acceptCharge;};
  actions.menu=()=>{calls.push('menu');dialog='menu';};
@@ -186,6 +186,17 @@ test('shop Escape closes only the shop and its size input keeps native arrows',t
  assert.deepEqual(h.calls,[]);
  h.key('keydown','Escape');
  assert.deepEqual(h.calls,['cancelCharge','closeShop']);
+});
+
+test('camera switches once while steering stays held, and typing or dialogs do not switch it',t=>{
+ const h=setup(t,{state:'flying'});
+ h.key('keydown','KeyA');
+ h.key('keydown','KeyV'); h.key('keydown','KeyV',{repeat:true});
+ assert.equal(h.count('camera'),1); assert.equal(h.keys.has('KeyA'),true);
+ h.key('keydown','KeyV',{target:element('input')});
+ h.key('keydown','KeyV',{target:element('select')});
+ h.setDialog('shop'); h.key('keydown','KeyV');
+ assert.equal(h.count('camera'),1);
 });
 test('boost shortcuts fire once only during flight and never from a dialog',t=>{
  const h=setup(t,{state:'flying'});

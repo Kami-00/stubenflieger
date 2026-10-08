@@ -24,6 +24,7 @@ export function createKeyboardControls({window,document,keys,getState,getDialog,
    return;
   }
   if(event.target.closest?.(editableSelector)||dialog==='error')return;
+  if(event.code==='KeyV'&&!dialog){event.preventDefault();if(!event.repeat)actions.camera?.();return;}
   const shortcuts={KeyR:'reset',KeyM:dialog==='menu'?'closeMenu':dialog==='leaderboard'?'closeBoard':dialog==='shop'?'closeShop':'menu',KeyB:'board',KeyT:'sound',KeyG:dialog==='shop'?'closeShop':'shop'};
   const action=shortcuts[event.code];
   if(action&&actions[action]){event.preventDefault();if(!event.repeat){clear();actions[action]();}return;}
