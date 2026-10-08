@@ -129,10 +129,13 @@ function tone(frequency, duration = .12, type = 'sine', volume = .06) {
     oscillator.start(); oscillator.stop(audio.currentTime + duration);
   } catch {}
 }
-$('sound').onclick = () => {
+function toggleSound() {
   sound = !sound; $('sound').textContent = sound ? '♪ AN' : '♪ AUS';
-  $('sound').setAttribute('aria-label', sound ? 'Ton ausschalten' : 'Ton einschalten'); tone(600);
-};
+  $('sound').setAttribute('aria-label', sound ? 'Ton ausschalten' : 'Ton einschalten');
+  $('menu-sound').textContent = sound ? 'Ton: an' : 'Ton: aus';
+  $('menu-sound').setAttribute('aria-pressed', String(sound)); tone(600);
+}
+$('sound').onclick = toggleSound; $('menu-sound').onclick = toggleSound;
 function releaseInputs() {
   keyboard?.clear(); cancelCharge(); releaseStick(); keys.clear();
   touch = { steer: 0, pitch: 0 }; input = { steer: 0, pitch: 0 };
@@ -154,9 +157,11 @@ function updatePracticeControls() {
   $('practice-toggle').textContent = 'Übungsmodus';
   $('practice-speed').value = String(percent); $('practice-speed-value').textContent = `${percent} %`;
   show('practice-settings', active); show('practice-badge', active);
-  $('practice-badge').textContent = `ÜBEN · ${percent} % · keine Belohnungen`;
+  $('practice-badge').textContent = `Üben · ${percent} %`;
+  $('practice-badge').setAttribute('aria-label', `Übungsmodus, ${percent} Prozent Tempo, keine Belohnungen`);
   $('practice-start-hint').textContent = active ? `Alle Türen offen · Unsterblich · ${percent} % Tempo. Im Menü anpassbar. Keine Belohnungen.` : 'In Ruhe üben: Tempo einstellen, alle Türen offen, unsterblich. Keine Belohnungen.';
   $('pause-finish').textContent = active ? 'Übung beenden' : 'Run beenden & Punkte mitnehmen';
+  $('menu-finish').textContent = $('pause-finish').textContent;
   $('menu-restart').textContent = active ? 'Übung neu starten' : 'Run abschließen & neu starten';
   $('again').textContent = active ? 'Weiter üben ↗' : 'Neuer Run ↗';
   $('reset').setAttribute('aria-label', active ? 'Übung neu starten' : 'Run beenden und neu starten');
@@ -246,8 +251,9 @@ function launch() {
   view.resetTrail(new Vector3().copy(physics.plane.position)); view.updateSling(0);
   if (sensorEnabled && sensor) calibration = { ...sensor };
   for (const id of ['launch-panel', 'level-label', 'footer']) show(id, false);
-  for (const id of ['stats', 'flight-controls', 'pause', 'door-progress']) show(id, true);
+  for (const id of ['stats', 'flight-controls', 'pause']) show(id, true);
   document.body.classList.add('flying'); hint(practicing() ? 'In Ruhe üben: Hindernisse lassen dich abprallen. Keine Belohnungen.' : 'Sterne sammeln, Türen öffnen. Im türkisen Aufwind steigen.');
+  updateHUD();
   snapshotRun(); tone(480, .4, 'triangle', .12); $('game').focus({ preventScroll: true });
 }
 
@@ -334,6 +340,7 @@ function pause(value = !paused) {
 }
 $('pause').onclick = () => pause(); $('resume').onclick = () => pause(false);
 $('pause-finish').onclick = () => { dialogs.close(); paused = false; finish(practicing() ? 'Übung beendet. Dein Guthaben und deine Entdeckungen bleiben unverändert.' : 'Run abgeschlossen. Deine Punkte kommen ins Guthaben.'); };
+$('menu-finish').onclick = () => $('pause-finish').click();
 function suspend() {
   releaseStick(); snapshotRun();
   if (state === 'flying') { paused = true; if (!dialogs.current()) dialogs.open('paused', $('resume')); }
@@ -365,7 +372,21 @@ function openMenu() {
   if (state === 'flying') paused = true;
   $('menu-shop').disabled = state === 'flying' || state === 'ending';
   $('menu-shop').textContent = state === 'flying' ? 'Shop nach dem Run verfügbar' : 'Shop & Flugzeug';
+  updateFlightDetails();
   dialogs.open('menu', $('close-menu'));
+}
+function updateFlightDetails() {
+  show('menu-flight-section', launched);
+  show('menu-finish', state === 'flying');
+  if (!launched || !run || !physics) return;
+  updateHUD();
+  for (const [detail, source] of [['time', 'time'], ['height', 'height'], ['rooms', 'rooms'], ['points', 'run-points'], ['room', 'flight-level']]) {
+    $('menu-flight-' + detail).textContent = $(source).textContent;
+  }
+  $('menu-flight-stars').textContent = `${run.stars.size} / ${HOUSE.collectibles.length}`;
+  $('menu-flight-discoveries').textContent = `${progression.getProfile().discoveredStarIds.length} / ${HOUSE.collectibles.length}`;
+  const next = run.nextDoor(), missing = next ? Math.max(0, next.threshold - run.stars.size) : 0;
+  $('menu-door-progress').textContent = practicing() ? 'Übung · alle Türen offen · keine Belohnungen' : next ? `${next.name}: noch ${missing} ${missing === 1 ? 'Stern' : 'Sterne'}` : 'Alle Türen sind offen.';
 }
 function closeMenu() {
   if (state === 'flying' && paused) dialogs.open('paused', $('resume'));
@@ -433,9 +454,18 @@ function updateHUD() {
   $('run-points').textContent = (calculateRunScore(summary) + firstDiscoveryBonus).toLocaleString('de-DE');
   $('flight-level').textContent = (room?.name || 'Über dem Garten').toUpperCase();
   const missing = nextDoor ? Math.max(0, nextDoor.threshold - run.stars.size) : 0;
-  $('door-progress').textContent = practicing() ? 'Übungsmodus · alle Türen offen · keine Belohnungen' : nextDoor ? `${nextDoor.name}: noch ${missing} ${missing === 1 ? 'Stern' : 'Sterne'}` : 'Alle Türen offen · finde die übrigen Sterne';
+  $('door-progress').textContent = nextDoor ? `Nächste Tür: ${missing} ★` : '';
+  show('door-progress', !practicing() && state === 'flying' && Boolean(nextDoor));
   $('height').classList.toggle('danger', nearCeiling);
-  show('ceiling-warning', nearCeiling && state === 'flying');
+  updateFlightMessages();
+}
+function updateFlightMessages() {
+  // One message lane keeps warnings and collection feedback out of the view.
+  const flying = state === 'flying', warning = flying && nearCeiling;
+  const reward = flying && !warning && rewardUntil > clock;
+  show('ceiling-warning', warning);
+  show('star-reward', reward);
+  show('wind-toast', flying && !warning && !reward && inThermal);
 }
 function followCamera(immediate = false, dt = .016) {
   flightCamera.update({ position: view.plane.position, quaternion: view.plane.quaternion,
@@ -481,7 +511,6 @@ function frame(now) {
     heading += input.steer * tuning.turnRate * simDt;
     position.copy(physics.plane.position); previousPosition.copy(position);
     const thermal = HOUSE.thermals.find(item => Math.hypot(position.x - item.x, position.z - item.z) < item.r && position.y >= item.y && position.y < item.y + item.height);
-    show('wind-toast', Boolean(thermal));
     if (thermal && !inThermal) tone(800, .3, 'sine', .04);
     inThermal = Boolean(thermal);
     const cruising = tuning.speed * (clock < turboUntil ? 1.65 : 1);
@@ -523,15 +552,13 @@ function frame(now) {
       const opened = run.collect(id);
       if (!opened) continue;
       if (practicing()) {
-        $('star-reward').textContent = 'Übungsstern · keine Punkte';
-        $('star-reward').dataset.first = 'false'; rewardUntil = clock + 1.5; show('star-reward', true);
         hint(run.stars.size === HOUSE.collectibles.length ? 'Alle Übungssterne gefunden. Du kannst weiterfliegen oder neu starten.' : `Übungsstern gefunden · ${run.stars.size}/${HOUSE.collectibles.length}`);
         tone(1100, .1); continue;
       }
       const reward = rewards.get(id); firstDiscoveryBonus += reward.bonus;
       $('star-reward').textContent = reward.firstDiscovery ? `Erstfund! +${reward.totalPoints} Punkte` : `+${reward.totalPoints} Punkte`;
       $('star-reward').dataset.first = String(reward.firstDiscovery);
-      rewardUntil = clock + 2.5; show('star-reward', true);
+      rewardUntil = clock + 1.35;
       for (const door of opened) applyDoor(door.id, true);
       tone(1100, .1);
       hint(opened.length ? opened.map(door => door.name).join(' · ') + ' ist jetzt offen!' : `Stern gesammelt! ${run.stars.size}/${HOUSE.collectibles.length}`);
@@ -554,7 +581,7 @@ function frame(now) {
     saveTime += dt; if (saveTime > 1) { saveTime = 0; snapshotRun(); }
   }
   if (state === 'ending' && clock - endingAt > .55) result();
-  view.update(dt, clock); nearCeiling = view.updateCeiling(physics.plane.position);
+  view.update(dt, clock); nearCeiling = view.updateCeiling(physics.plane.position); updateFlightMessages();
   followCamera(false, dt); hudTime += dt; if (hudTime > .1) { hudTime = 0; updateHUD(); }
   view.render();
 }

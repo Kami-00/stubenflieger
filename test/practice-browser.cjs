@@ -122,7 +122,7 @@ window.practiceQA={
       assert.equal(postCount('/api/house-runs'), 0); assert.equal(postCount('/api/house-leaderboard'), 0);
     }
     async function finishViaUI() {
-      await page.locator('#pause').click(); await page.locator('#pause-finish').click();
+      await page.keyboard.press('p'); await page.locator('#pause-finish').click();
       await page.clock.runFor(2500); await page.locator('#result').waitFor({ state: 'visible' });
     }
     async function forceScoreSubmit() { await page.locator('#score-form').evaluate(node => node.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))); }

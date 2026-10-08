@@ -57,3 +57,45 @@ html[data-joystick-side='right'] .joystick{left:auto;right:var(--ui-right)}html[
  #duel-help{left:130px;right:130px;justify-content:center;text-align:center;font-size:9px}.network-banner{bottom:calc(var(--ui-bottom) + 112px)}.spectator-banner{bottom:var(--ui-bottom);padding:8px 14px}
  .settings-heading{padding-top:9px;padding-bottom:9px}.settings-heading .eyebrow{display:none}.settings-heading h2{font-size:24px;margin:0}
 }
+
+/* During a round, only a single compact row stays over the flight scene. */
+body.in-flight{--flight-top:max(4px,env(safe-area-inset-top))}
+.in-flight .duel-header{position:fixed;top:var(--flight-top);left:var(--ui-left);right:var(--ui-right);height:44px;min-height:44px;padding:0;gap:8px;pointer-events:none}
+.in-flight .duel-header .brand,.in-flight #back-solo{display:none}
+.in-flight .duel-header .header-actions{flex:0 0 auto;max-width:none;min-width:92px;gap:4px;flex-wrap:nowrap}
+.in-flight .duel-header button{pointer-events:auto}
+.in-flight .duel-header .quiet-button{width:44px;height:44px;min-width:44px;min-height:44px;padding:4px;border-radius:12px;background:#2038329c;border-color:#fff6e431}
+.in-flight #duel-camera-mode{width:44px;min-width:44px;font-size:10px}
+.in-flight .duel-hud{position:static;transform:none;display:flex;align-items:center;width:auto;max-width:calc(100% - 100px);height:40px;gap:6px;flex:0 1 auto}
+.in-flight .health-card.own{position:relative;flex:none;width:57px;height:40px;padding:4px 7px 8px;border:1px solid #fff6e431;border-radius:11px;background:#203832a6}
+.in-flight .health-card.own>div:first-child{height:25px;margin:0;gap:4px;justify-content:center}
+.in-flight .health-card.own strong{font-size:17px;font-variant-numeric:tabular-nums;color:#fff6e4;line-height:1}
+.in-flight .health-card.own .health-symbol{font-size:12px;color:var(--player-color,#9be2bd)}
+.in-flight #own-name{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.in-flight #own-meter{position:absolute;bottom:4px;left:7px;right:7px;height:3px}
+.in-flight .time-card{display:flex;align-items:center;gap:9px;height:40px;padding:4px 9px;border:1px solid #fff6e431;border-radius:11px;background:#203832a6;white-space:nowrap}
+.in-flight .time-card strong{margin:0;font-size:17px;line-height:1;font-variant-numeric:tabular-nums}
+.in-flight .time-card small{margin:0;font-size:10px;line-height:1.2;color:#e3ebdc}
+.in-flight .joystick{background:#29483f24;border-color:#fff6e438}
+.in-flight .joystick>span{background:#ffca6a66;border:1px solid #ffe2a561}
+.in-flight .joystick small,.in-flight .fire-button small,.in-flight #duel-help{display:none}
+.in-flight .fire-button{background:#ffca6a6b;border-color:#ffe0a58c;color:#fff1d6}
+.in-flight .fire-button.active{background:#f7a850c4}
+.in-flight .duel-feedback{top:calc(var(--flight-top) + 46px);margin:0;font-size:11px;max-width:calc(100% - 28px);white-space:normal;text-align:center}
+.in-flight .network-banner{top:calc(var(--flight-top) + 50px);bottom:auto;width:max-content;max-width:calc(100% - 28px);padding:7px 12px;border-radius:10px;box-shadow:none}
+.in-flight .network-banner strong{font-size:12px;line-height:1.35}
+.in-flight .network-banner span{display:none}
+.in-flight:has(#duel-network:not([hidden])) .duel-feedback{visibility:hidden}
+.in-flight .spectator-banner{width:max-content;max-width:calc(100% - 28px);bottom:var(--ui-bottom);padding:8px 12px;border-radius:10px;background:#203832bd}
+.in-flight .spectator-banner strong{font-size:12px;line-height:1.4}
+.in-flight .spectator-banner span{display:none}
+.in-flight .error-message,.in-flight .session-warning{max-width:min(380px,calc(100% - 28px));padding:7px 10px;font-size:11px;line-height:1.35}
+.settings-section .match-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}
+.settings-section .connection{font-size:12px;max-width:none;line-height:1.45}
+.settings-section #leave-duel{flex:none;color:#ffd6bb}
+.settings-section .opponents{grid-template-columns:1fr;gap:7px}
+.settings-section .opponent-card{padding:9px 11px}
+.settings-section .opponent-label{font-size:12px}
+.settings-section .opponent-hp{font-size:16px}
+.settings-section .opponent-state{display:block;font-size:10px;margin-top:5px}
+.settings-section .opponent-heading{margin-bottom:6px}

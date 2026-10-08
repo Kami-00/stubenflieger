@@ -80,13 +80,27 @@ const output = 'D:/test/tmp/stubenflieger-five/states';
     assert.equal(await page.locator('#lobby-count').textContent(), '5 / 5 Piloten');
 
     await deliver(packet('playing', identities(), changed(initial, 30, {})));
+    assert.equal(await page.locator('#opponents .health-meter:visible').count(), 0);
+    await page.locator('#duel-settings-button').click();
     assert.equal(await page.locator('#opponents .health-meter:visible').count(), 4);
+    await page.locator('#duel-close-settings').click();
     assert.equal(await page.locator('#own-hp').textContent(), '100');
     assert(await page.locator('#duel-reticle').isVisible());
     await page.locator('#duel-canvas').focus();
     await page.keyboard.down('d'); await page.keyboard.down('Space');
     await page.waitForFunction(() => window.stateQA.sends.some(message => message.type === 'input' && message.steer === 1 && message.fire));
     checks.push('The real keyboard handlers send controls during a five-player round.');
+
+    await page.locator('#duel-settings-button').click();
+    const afterClose = await page.evaluate(() => new Promise(resolve => {
+      const dialog = document.getElementById('duel-settings'), canvas = document.getElementById('duel-canvas');
+      dialog.addEventListener('close', () => resolve(window.stateQA.sends.length), { once: true });
+      // New controls can arrive after close() but before its queued close event.
+      document.getElementById('duel-close-settings').click(); canvas.focus();
+      for (const code of ['KeyD', 'Space']) canvas.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+    }));
+    await page.waitForFunction(start => window.stateQA.sends.slice(start).some(message => message.type === 'input' && message.steer === 1 && message.fire), afterClose);
+    checks.push('Fresh controls entered before the queued native dialog close event remain active after that event.');
 
     const eliminated = changed(initial, 60, { p1: 0, p2: 60, p3: 80 });
     const afterKOIdentities = identities().map(player => ({ ...player, eliminated: player.id === 'p1' }));
@@ -145,7 +159,9 @@ const output = 'D:/test/tmp/stubenflieger-five/states';
     assert(await page.evaluate(() => window.stateQA.sends.some(message => message.type === 'start')));
     const fresh = createDuelSimulation({ playerIds: sparse }).snapshot();
     await deliver(packet('playing', identities(sparse), fresh));
+    await page.locator('#duel-settings-button').click();
     assert.equal(await page.locator('#opponents .health-meter:visible').count(), 2);
+    await page.locator('#duel-close-settings').click();
     assert.equal(await page.locator('#own-hp').textContent(), '100');
     assert.equal(await page.locator('#duel-spectator').isVisible(), false);
     assert(await page.locator('#duel-reticle').isVisible());

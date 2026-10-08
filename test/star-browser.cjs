@@ -74,7 +74,9 @@ const esbuild = require('esbuild');
 
     page = await createPage();
     await assertCounter(page, 0);
+    await page.locator('.launch-details > summary').click();
     assert.match(await page.locator('.star-key').innerText(), /Gold: Erstfund.*Silberblau: schon entdeckt/s);
+    await page.locator('.launch-details > summary').click();
     const firstPending = await firstPickup(page);
     assert.deepEqual(firstPending.summary.starIds, [firstId]);
     let saved = await profile(page);
@@ -169,7 +171,7 @@ const esbuild = require('esbuild');
       await page.clock.runFor(16);
       await assertCounter(page, 1);
       const layout = await page.evaluate(() => {
-        const ids = ['.discovery-hud', '#star-reward'];
+        const ids = ['#stats', '#star-reward'];
         return { width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
           elements: ids.map(selector => {
             const node = document.querySelector(selector), rect = node.getBoundingClientRect();
@@ -181,11 +183,14 @@ const esbuild = require('esbuild');
       for (const element of layout.elements) {
         assert(element.left >= 0 && element.right <= width && element.top >= 0 && element.bottom <= height, JSON.stringify(element));
         assert.equal(element.clipped, false, JSON.stringify(element));
-        assert(element.fontSize >= (element.selector === '#star-reward' ? 14 : 9), JSON.stringify(element));
+        assert(element.fontSize >= 12, JSON.stringify(element));
       }
       await page.screenshot({ path: path.join(output, `mobile-${width}-first-discovery.png`) });
     }
-    checks.push('First/repeat pickup updates stars and run points immediately; 390px and 320px discovery counter and popup stay visible without clipping.');
+    assert.equal(await page.locator('.discovery-hud').isVisible(), false);
+    await page.locator('#menu-button').click();
+    assert.equal(await page.locator('#menu-flight-discoveries').textContent(), '1 / 96');
+    checks.push('First/repeat pickup updates stars and run points immediately; 390px and 320px compact HUD and popup stay visible without clipping, with discovery totals in the flight menu.');
 
     assert.deepEqual(errors, []); assert.deepEqual(external, []);
     const report = { passed: true, checks, output, errors, external };

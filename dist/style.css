@@ -124,3 +124,30 @@ html[data-joystick-side='right'] .boost-controls,html[data-joystick-side='right'
  #calibrate{bottom:calc(var(--ui-bottom) + 52px);font-size:11px}.level-label{display:none}.modal{padding-top:max(8px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom))}
  .menu-heading{padding-top:10px;padding-bottom:10px}.menu-card .menu-heading h2{font-size:24px}.menu-heading .eyebrow{display:none}
 }
+
+/* The flight view keeps the house clear; detailed values live in the menu. */
+body.flying header{justify-content:flex-end}
+body.flying header .brand,body.flying #sound,body.flying #reset,body.flying #pause,body.flying #hint,body.flying .flight-legend,body.flying #joystick small{display:none!important}
+.stats .hud-detail,.stats .flight-level,.stats .discovery-hud{display:none!important}
+body.flying .stats{top:var(--ui-top);left:var(--ui-left);right:auto;display:flex;align-items:center;justify-content:flex-start;gap:12px;min-height:44px;max-width:calc(100cqw - var(--ui-left) - var(--ui-right) - 104px);padding:8px 10px;border-radius:11px;background:#263c3ab3;border-color:#ffffff18;pointer-events:none}
+body.flying .stats>.hud-stars,body.flying .stats>.hud-points{display:flex;align-items:baseline;gap:5px;white-space:nowrap;min-width:0}
+body.flying .stats small{display:inline;margin:0;font-size:12px;line-height:1;letter-spacing:.2px;color:#c5d8cd}
+body.flying .stats strong{font-size:15px;line-height:1.2}body.flying .stats em{font-size:10px}
+body.flying .stats:has(.practice-badge:not([hidden])){padding:8px 10px}
+body.flying .stats:has(.practice-badge:not([hidden]))>.hud-stars,body.flying .stats:has(.practice-badge:not([hidden]))>.hud-points{display:none}
+body.flying .practice-badge{position:static;font-size:12px;font-weight:700;line-height:1.4;letter-spacing:0;color:#ffda93}
+.flight-messages{position:fixed;top:calc(var(--ui-top) + 52px);left:var(--ui-left);right:auto;z-index:3;display:flex;flex-direction:column;align-items:flex-start;gap:5px;width:min(330px,calc(100cqw - var(--ui-left) - var(--ui-right)));pointer-events:none}
+.flight-messages .door-progress,.flight-messages .ceiling-warning,.flight-messages .wind-toast,.flight-messages .star-reward{position:static;inset:auto!important;transform:none;max-width:100%;width:auto;margin:0;padding:5px 8px;border-radius:7px;white-space:normal;font-size:11px;line-height:1.35;letter-spacing:0;text-align:left;box-shadow:none}
+.flight-messages .door-progress{background:#263c3a91;color:#e4dcc2;font-size:10px}
+.flight-messages .ceiling-warning{border:1px solid #ff927acc;background:#6c342fed;font-weight:700}
+.flight-messages .wind-toast{background:#254b43d9;color:#b5e8d5;font-size:10px;font-weight:600}
+.flight-messages .star-reward{font-size:12px;font-weight:700;padding:6px 9px}
+body.flying #joystick{background:#263c3a18;border-color:#fff6e42e}body.flying #stick{background:#ffca6a96;box-shadow:0 2px 10px #142d3126}
+body.flying .boost-controls{bottom:var(--ui-bottom)}body.flying .boost-controls button{background:#263c3aab;border-color:#c1d3b83d}
+.menu-card #calibrate{position:static;inset:auto;width:100%;min-height:44px;padding:10px;font-size:13px}
+.menu-card .menu-flight-room{margin:0 0 14px;color:#ffda93;font-size:14px;font-weight:600}
+.menu-flight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0}
+.menu-flight-grid>div{padding:10px 12px;border-radius:10px;background:#ffffff06;min-width:0}
+.menu-flight-grid dt{font-size:11px;line-height:1.35;color:#bed0c3;margin-bottom:5px}.menu-flight-grid dd{margin:0;color:#fff6e4;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.menu-card #menu-door-progress{margin:12px 0 0}.menu-card #menu-sound{min-height:46px;font-size:13px}.menu-card #menu-finish{min-height:44px;flex-shrink:0}
+@container game (max-width:480px){body.flying .stats{gap:9px;padding:8px;max-width:calc(100cqw - var(--ui-left) - var(--ui-right) - 100px)}body.flying .stats small{font-size:12px}body.flying .stats strong{font-size:14px}body.flying .stats>.hud-stars,body.flying .stats>.hud-points{gap:4px}.menu-flight-grid{gap:8px}.menu-flight-grid>div{padding:9px}.menu-flight-grid dd{font-size:16px}}

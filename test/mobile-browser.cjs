@@ -156,7 +156,7 @@ window.mobileQA.place=()=>{physics.plane.position.set(17,8,13);physics.plane.pre
       const visible = await page.evaluate(() => window.mobileQA.nativeViewport());
       assert(Math.abs(visible.scale - 1) < .01 && Math.abs(visible.innerWidth - width) <= 1, `${name}: mobile autoscale/width mismatch ${JSON.stringify(visible)}`);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${name}: document overflow`);
-      const selectors = app === 'solo' ? ['#joystick', '#menu-button', '#pause', '#camera-mode'] : ['#duel-stick', '#fire-button', '#duel-settings-button', '#duel-camera-mode'];
+      const selectors = app === 'solo' ? ['#joystick', '#menu-button', '#camera-mode'] : ['#duel-stick', '#fire-button', '#duel-settings-button', '#duel-camera-mode'];
       for (const selector of selectors) {
         const rect = await page.locator(selector).boundingBox();
         assert(rect && rect.x >= -1 && rect.y >= -1 && rect.x + rect.width <= width + 1 && rect.y + rect.height <= height + 1, `${name}: ${selector} clipped ${JSON.stringify(rect)}`);

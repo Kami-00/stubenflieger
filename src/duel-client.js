@@ -102,6 +102,7 @@ function renderHealth() {
   }
   const own = myPlayer(), ownPlane = participants.find(player => player.id === slot), ownHp = health(ownPlane, own);
   $('own-name').textContent = `${own?.name || 'Du'} · DU`; $('own-hp').textContent = ownHp;
+  $('duel-round-own').textContent = `${own?.name || 'Du'} · DU · ${ownHp} Leben`;
   $('own-card').style.setProperty('--player-color', DUEL_PLAYER_COLORS[slot] || DUEL_PLAYER_COLORS.p1);
   $('own-card').classList.toggle('is-out', isPilotOut(ownPlane, own)); updateMeter($('own-meter'), ownHp, own?.name || 'Du');
   for (const [id, card] of opponentCards) {
@@ -144,7 +145,15 @@ function render() {
   const isOut = spectating(), inFlight = ['countdown', 'playing', 'reconnecting'].includes(phase);
   show('duel-entry', phase === 'entry'); show('duel-lobby', phase === 'lobby');
   show('duel-result', phase === 'finished' || phase === 'expired');
-  show('duel-hud', inFlight); show('duel-help', inFlight && !isOut);
+  show('duel-hud', inFlight); show('duel-help', false); show('solo-link', !inFlight);
+  show('duel-round-overview', inFlight); show('duel-match-controls', inFlight);
+  // Move the existing controls so their live status and handlers stay shared.
+  const headerActions = $('duel-header-actions'), matchControls = $('duel-match-controls');
+  if (inFlight && $('connection-status').parentElement !== matchControls) {
+    matchControls.append($('connection-status'), $('leave-duel'));
+  } else if (!inFlight && $('connection-status').parentElement !== headerActions) {
+    headerActions.prepend($('connection-status')); headerActions.insertBefore($('leave-duel'), $('back-solo'));
+  }
   show('duel-camera-mode', inFlight); appearancePicker.render(phase, connected(), busy);
   show('duel-spectator', inFlight && isOut);
   show('duel-countdown', phase === 'countdown');
@@ -153,6 +162,7 @@ function render() {
   show('duel-touch', phase === 'playing' && connected() && !isOut); show('duel-reticle', phase === 'playing' && connected() && !isOut);
   show('leave-duel', Boolean(room && token)); show('back-solo', !token);
   document.body.classList.toggle('playing', phase === 'playing');
+  document.body.classList.toggle('in-flight', inFlight);
   document.body.classList.toggle('spectating', isOut && inFlight);
   if (isOut && !wasSpectating) { clearInput(); feedback('Du schaust jetzt zu. Die Runde läuft weiter.'); }
   wasSpectating = isOut;
@@ -347,6 +357,7 @@ function leaveRoom({ notify = true, forget = true } = {}) {
   appearancePending = null; appearanceReceived = false; appearancePicker.reject();
 }
 function newRoom() {
+  if (settingsOpen()) $('duel-settings').close();
   leaveRoom(); room = null; history.replaceState(null, '', '/duel'); showError(); warning(''); render(); $('duel-name').focus();
 }
 async function startFromLocation() {
@@ -437,8 +448,13 @@ $('duel-settings-button').onclick = () => {
   clearInput();
   if (!settingsOpen()) $('duel-settings').showModal();
 };
-$('duel-close-settings').onclick = () => $('duel-settings').close();
-$('duel-settings').addEventListener('close', clearInput);
+function closeSettings() {
+  // Native close events arrive later; resetting there would erase new flight input.
+  clearInput(); $('duel-settings').close();
+  if (['playing', 'countdown', 'reconnecting'].includes(phase)) $('duel-canvas').focus({ preventScroll: true });
+}
+$('duel-close-settings').onclick = closeSettings;
+$('duel-settings').addEventListener('cancel', event => { event.preventDefault(); closeSettings(); });
 const mobileSettings = createMobileSettings({
   sideSelect: $('duel-joystick-side'), autoFullscreenInput: $('duel-auto-fullscreen'),
   fullscreenButton: $('duel-fullscreen-button'), statusNode: $('duel-fullscreen-status'),
