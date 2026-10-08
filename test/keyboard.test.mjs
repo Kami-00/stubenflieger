@@ -48,7 +48,7 @@ test('a declined charge does not own the subsequent Space release',t=>{
 
 test('Enter and Space on other buttons and links retain native activation',t=>{
  const h=setup(t);
- for(const target of [element('button'),element('a[href]'),element('[role="button"]')]){
+ for(const target of [element('button'),element('a[href]'),element('summary'),element('[role="button"]')]){
   for(const code of ['Enter','Space']){
    assert.equal(h.key('keydown',code,{target}).defaultPrevented,false);
    assert.equal(h.key('keyup',code,{target}).defaultPrevented,false);

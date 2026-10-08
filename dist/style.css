@@ -71,3 +71,56 @@ input:focus-visible,select:focus-visible,#game:focus-visible,#ranking-table:focu
 .stats:has(.practice-badge:not([hidden])) .discovery-hud{bottom:27px}
 @container game (max-width:850px){.stats:has(.practice-badge:not([hidden])) .flight-level{bottom:27px}}
 @container game (max-width:480px){.practice-menu{padding:12px}.practice-speed-label{gap:8px}.practice-menu label{font-size:12px}.practice-badge{letter-spacing:0}}
+
+/* Mobile cockpit: the launch action stays first; settings stay reachable. */
+:root{--ui-left:max(12px,env(safe-area-inset-left));--ui-right:max(12px,env(safe-area-inset-right));--ui-top:max(12px,env(safe-area-inset-top));--ui-bottom:max(20px,env(safe-area-inset-bottom));--hud-top:calc(var(--ui-top) + 56px)}
+button,select,summary,.secondary,.duel-link{min-height:44px}summary{cursor:pointer;touch-action:manipulation;list-style-position:inside}summary:focus-visible{outline:3px solid #ffca6a;outline-offset:3px}
+.icon-button,.top-actions .icon-button{min-width:44px;min-height:44px;height:44px}.brand{min-height:44px}.top-actions{gap:4px}
+header{padding:var(--ui-top) var(--ui-right) 0 var(--ui-left);gap:8px}
+.launch-panel{bottom:max(24px,env(safe-area-inset-bottom));max-height:calc(100cqh - var(--ui-top) - 64px);width:390px;padding:20px}
+.launch-panel h1{margin:12px 0 15px;font-size:28px}.launch-panel .quick-start-hint{font-size:11px;text-align:center;margin:7px 0 11px;line-height:1.4;color:#cfddcf}
+.launch-panel .aircraft-summary{margin:7px 0;font-size:12px}.launch-panel .practice-toggle{margin:10px 0;min-height:44px}
+.launch-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.launch-panel .launch-actions #start-shop,.launch-panel .launch-actions .duel-link{display:flex;align-items:center;justify-content:center;margin:0;min-height:48px;padding:9px 10px;font-size:12px;line-height:1.35;text-align:center}
+.launch-details,.menu-details{border-top:1px solid #ffffff26;margin-top:12px}
+.launch-details>summary,.menu-details>summary{display:list-item;padding:13px 2px;color:#ffda93;font-size:13px;font-weight:700}
+.launch-details .details-body{padding:4px 0 0}.launch-panel .start-menu-hint{font-size:11px;margin:12px 0 0}.launch-help{text-align:left}
+.modal{padding:max(12px,env(safe-area-inset-top)) var(--ui-right) max(12px,env(safe-area-inset-bottom)) var(--ui-left)}
+.modal-heading{position:sticky;top:0;z-index:2;background:#263c3a;padding-bottom:10px}
+.menu-card{width:min(100%,480px);padding:0}.menu-heading{padding:18px 20px 14px;border-bottom:1px solid #ffffff26;align-items:center}
+.menu-card .menu-heading h2{font-size:29px;margin:6px 0 0}.close-menu-button{display:flex;align-items:center;gap:10px;font-size:12px;flex:none}.close-menu-button span{font-size:23px}
+.menu-content{padding:0 20px 20px}.menu-section{padding:20px 0;border-bottom:1px solid #ffffff26}.menu-section:last-child{padding-bottom:0;border-bottom:0}
+.menu-section>h3{margin:0 0 14px;font-size:18px;color:#ffda93}.menu-section .practice-menu{margin:0 0 14px;padding:13px}.menu-section .practice-menu h3{font-size:14px;margin-bottom:10px}
+.menu-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.menu-card .menu-action-grid .wide{display:flex;align-items:center;justify-content:center;margin:0;padding:10px;font-size:12px;line-height:1.4;min-height:48px;text-align:center}
+.setting-label{display:block;font-size:13px;font-weight:600;margin:10px 0 8px}.setting-select{display:block;width:100%;min-width:0;min-height:46px;padding:10px 12px;background:#142c2a;border:1px solid #91b5a780;border-radius:10px;color:#fff6e4;font:inherit;font-size:16px}
+.setting-check{display:flex;align-items:center;gap:10px;min-height:48px;font-size:13px;line-height:1.4;cursor:pointer}.setting-check input{flex:none;width:22px;height:22px;margin:0;accent-color:#ffca6a}
+.menu-card .menu-help{font-size:12px;line-height:1.55;margin:9px 0 12px}.menu-section .control-choice{margin-top:14px}.menu-section .control-choice>span{text-align:left;margin:0;font-size:12px}.menu-details .keyboard-help{padding:4px 0 0;margin:0;border:0}.menu-details .keyboard-help h3{font-size:13px}
+.menu-card #rotate-view,.menu-card #fullscreen-button{min-height:46px;font-size:13px}.menu-card #fullscreen-status:empty{display:none}
+.stats{top:var(--hud-top)}#flight-controls{pointer-events:none}#flight-controls button,#joystick{pointer-events:auto}
+#joystick{left:var(--ui-left);right:auto;bottom:calc(var(--ui-bottom) + 18px);width:112px;height:112px;z-index:3}#stick{left:34px;top:34px}
+.boost-controls{right:var(--ui-right);left:auto;bottom:calc(var(--ui-bottom) + 58px);z-index:3}#calibrate{right:var(--ui-right);left:auto;bottom:var(--ui-bottom);z-index:3}
+html[data-joystick-side='right'] #joystick{left:auto;right:var(--ui-right)}
+html[data-joystick-side='right'] .boost-controls,html[data-joystick-side='right'] #calibrate{right:auto;left:var(--ui-left)}
+@container game (max-width:850px){
+ .launch-panel{left:var(--ui-left);right:var(--ui-right);width:auto;bottom:max(12px,env(safe-area-inset-bottom));max-height:calc(100cqh - var(--ui-top) - 64px);padding:16px}
+ .stats{left:var(--ui-left);right:var(--ui-right)}.door-progress{left:var(--ui-left);right:var(--ui-right);top:calc(var(--hud-top) + 108px)}
+ .ceiling-warning{top:calc(var(--hud-top) + 156px)!important}.wind-toast{top:calc(var(--hud-top) + 202px)}
+ .launch-panel h1{font-size:25px;margin:9px 0 12px}.launch-button{min-height:60px}.shop-tabs button{min-height:44px}
+}
+@container game (max-width:480px){
+ .brand{min-width:44px;justify-content:center}.brand>span:last-child{display:none}.top-actions .icon-button{min-width:44px;width:44px;padding:0 4px;font-size:12px}#camera-mode{font-size:10px;min-width:44px}#sound{font-size:10px}
+ .menu-heading{padding:14px}.menu-content{padding:0 14px 16px}.menu-card .menu-heading h2{font-size:27px}.menu-heading .eyebrow{font-size:9px;letter-spacing:1px}.close-menu-button{padding:0 9px;font-size:11px;gap:6px}
+ .menu-section{padding:16px 0}.menu-action-grid{grid-template-columns:1fr}.keyboard-help dl{grid-template-columns:1fr;gap:4px}.keyboard-help dd{margin-bottom:8px}
+ .result-card:not(.menu-card){padding:20px}.launch-panel .quick-start-hint{font-size:10px}.practice-toggle::after{flex:none}
+}
+@container game (max-height:550px) and (min-aspect-ratio:1/1){
+ .launch-panel{left:auto;right:var(--ui-right);width:310px;bottom:max(10px,env(safe-area-inset-bottom));padding:14px;max-height:calc(100cqh - var(--ui-top) - 56px)}
+ .launch-panel h1{font-size:22px;margin:8px 0 10px}.launch-button{min-height:54px}.launch-panel .quick-start-hint{margin:5px 0 7px}
+ .stats{top:var(--hud-top);left:var(--ui-left);right:auto;gap:12px;max-width:460px;padding-top:7px}.stats strong{font-size:16px}.stats small{font-size:7px}
+ .door-progress{top:calc(var(--hud-top) + 99px);left:var(--ui-left);right:auto;max-width:min(350px,55cqw);font-size:10px;padding:6px 10px}
+ .ceiling-warning{top:calc(var(--hud-top) + 143px)!important;font-size:10px;padding:7px 12px}.wind-toast{top:var(--hud-top);left:auto;right:var(--ui-right);font-size:10px;padding:8px 11px;transform:none}
+ #joystick{width:100px;height:100px;bottom:calc(var(--ui-bottom) + 12px)}#stick{left:28px;top:28px}#joystick small{bottom:-17px;font-size:8px}
+ .boost-controls{bottom:var(--ui-bottom);flex-direction:row;gap:6px;max-width:calc(100cqw - 145px)}.boost-controls button{min-width:94px;max-width:125px;min-height:44px;font-size:11px;line-height:1.2;padding:8px}
+ #calibrate{bottom:calc(var(--ui-bottom) + 52px);font-size:11px}.level-label{display:none}.modal{padding-top:max(8px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom))}
+ .menu-heading{padding-top:10px;padding-bottom:10px}.menu-card .menu-heading h2{font-size:24px}.menu-heading .eyebrow{display:none}
+}

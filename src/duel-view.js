@@ -10,9 +10,9 @@ import { createAircraftEffects } from './aircraft-effects.js';
 
 // The server owns the game. This view smooths snapshots and predicts only the
 // local pose for at most 100 ms; it can never award hits or alter health.
-export function createDuelView(canvas) {
+export function createDuelView(canvas, viewport = () => ({ width: innerWidth, height: innerHeight })) {
   const physics = createPhysics(DUEL_HOUSE, { form: 'classic', size: 1 });
-  const view = createScene(canvas, physics, () => ({ width: innerWidth, height: innerHeight }));
+  const view = createScene(canvas, physics, viewport);
   for (const id of DUEL_OPEN_DOORS) { physics.setDoorOpen(id, true); view.setDoorOpen(id, true); }
   view.sling.visible = false;
   const aircraft = Object.fromEntries(DUEL_PLAYER_IDS.map((id, index) => {

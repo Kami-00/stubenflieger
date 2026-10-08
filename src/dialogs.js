@@ -1,7 +1,7 @@
 // One active dialog owns focus; the rest of the game is temporarily inert.
 export function createDialogs(document,root){
  const modals=[...root.querySelectorAll('.modal')];
- const selector='button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])';
+ const selector='button:not(:disabled),a[href],summary,input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])';
  let active=null;
  function items(){return active?[...active.querySelectorAll(selector)].filter(el=>!el.closest('[hidden],[inert]')&&el.getClientRects().length):[];}
  function focus(element){(element||items()[0]||active)?.focus({preventScroll:false});}

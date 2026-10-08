@@ -13,6 +13,7 @@ import { createDialogs } from './dialogs.js';
 import { createFlightCamera } from './camera.js';
 import { readViewMode, saveViewMode, updateViewButton } from './view-mode.js';
 import { normalizePracticeSpeed, scalePracticeDelta, createPracticeRebound } from './practice.js';
+import { createMobileSettings, readMobileViewport } from './mobile-settings.js';
 
 const $ = id => document.getElementById(id);
 const show = (id, visible) => { $(id).hidden = !visible; };
@@ -55,10 +56,11 @@ try {
   const saved = Number(localStorage.getItem('stubenflieger.rotation'));
   if ([0, 90, 180, 270].includes(saved)) rotation = saved;
 } catch {}
-const viewport = () => rotation % 180 ? { width: innerHeight, height: innerWidth } : { width: innerWidth, height: innerHeight };
+const viewport = () => readMobileViewport(rotation);
 function layout() {
-  const { width, height } = viewport();
-  Object.assign($('app').style, { width: width + 'px', height: height + 'px', transform: `translate(-50%, -50%) rotate(${rotation}deg)` });
+  releaseInputs();
+  const { width, height, centerX, centerY } = viewport();
+  Object.assign($('app').style, { width: width + 'px', height: height + 'px', left: centerX + 'px', top: centerY + 'px', transform: `translate(-50%, -50%) rotate(${rotation}deg)` });
   $('rotation-value').textContent = rotation + '°';
   window.dispatchEvent(new Event('gameviewportchange'));
 }
@@ -67,7 +69,11 @@ $('rotate-view').onclick = () => {
   try { localStorage.setItem('stubenflieger.rotation', String(rotation)); } catch {}
   layout();
 };
-window.addEventListener('resize', layout);
+const mobileSettings = createMobileSettings({
+  sideSelect: $('joystick-side'), autoFullscreenInput: $('auto-fullscreen'),
+  fullscreenButton: $('fullscreen-button'), statusNode: $('fullscreen-status'),
+  getRotation: () => rotation, onSideChange: releaseInputs, onViewportChange: layout,
+});
 layout();
 
 function reportStorage(message) {
@@ -221,8 +227,9 @@ function beginCharge() {
   charging = true; chargeStart = performance.now(); dragPower = 0; power = .12; tone(160, .07); return true;
 }
 function cancelCharge() {
-  if (chargePointer !== null && $('launch').hasPointerCapture(chargePointer)) $('launch').releasePointerCapture(chargePointer);
-  chargePointer = null; charging = false; power = dragPower = 0;
+  const pointer = chargePointer; chargePointer = null;
+  if (pointer !== null && $('launch').hasPointerCapture(pointer)) $('launch').releasePointerCapture(pointer);
+  charging = false; power = dragPower = 0;
   view?.updateSling(0); $('power-fill').style.transform = 'scaleX(0)';
   $('launch-label').textContent = 'Ziehen & loslassen'; $('power-label').textContent = 'GUMMISCHLEUDER ↗';
 }
@@ -261,7 +268,8 @@ $('launch').addEventListener('pointermove', event => {
 $('launch').addEventListener('pointerup', event => {
   if (event.pointerId === chargePointer) { chargePointer = null; launch(); }
 });
-$('launch').addEventListener('pointercancel', cancelCharge);
+$('launch').addEventListener('pointercancel', event => { if (event.pointerId === chargePointer) cancelCharge(); });
+$('launch').addEventListener('lostpointercapture', event => { if (event.pointerId === chargePointer) cancelCharge(); });
 $('launch').addEventListener('click', event => { if (event.detail === 0) quickLaunch(); });
 function sensorAngles(beta, gamma, angle) {
   const b = beta * Math.PI / 180, g = gamma * Math.PI / 180, a = angle * Math.PI / 180;
@@ -305,15 +313,18 @@ function moveStick(event) {
   $('stick').style.transform = `translate(${offset.x * scale}px,${offset.y * scale}px)`;
 }
 $('joystick').addEventListener('pointerdown', event => {
-  if (stickPointer !== null) return;
+  if (stickPointer !== null || state !== 'flying' || paused || dialogs.current() || (event.pointerType === 'mouse' && event.button !== 0)) return;
   event.preventDefault(); stickPointer = event.pointerId; $('joystick').setPointerCapture(event.pointerId); moveStick(event);
 });
 $('joystick').addEventListener('pointermove', event => { if (event.pointerId === stickPointer) moveStick(event); });
 function releaseStick() {
-  if (stickPointer !== null && $('joystick').hasPointerCapture(stickPointer)) $('joystick').releasePointerCapture(stickPointer);
-  stickPointer = null; touch = { steer: 0, pitch: 0 }; $('stick').style.transform = 'translate(0,0)';
+  const pointer = stickPointer; stickPointer = null;
+  if (pointer !== null && $('joystick').hasPointerCapture(pointer)) $('joystick').releasePointerCapture(pointer);
+  touch = { steer: 0, pitch: 0 }; $('stick').style.transform = 'translate(0,0)';
 }
-$('joystick').addEventListener('pointerup', releaseStick); $('joystick').addEventListener('pointercancel', releaseStick);
+for (const kind of ['pointerup', 'pointercancel', 'lostpointercapture']) $('joystick').addEventListener(kind, event => {
+  if (event.pointerId === stickPointer) releaseStick();
+});
 
 
 function pause(value = !paused) {

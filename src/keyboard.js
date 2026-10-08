@@ -36,7 +36,7 @@ export function createKeyboardControls({window,document,keys,getState,getDialog,
   if((event.code==='Digit1'||event.code==='Digit2')&&getState()==='flying'){
    event.preventDefault();if(!event.repeat)actions.boost?.(event.code==='Digit1'?0:1);return;
   }
-  const nativeControl=event.target.closest?.('button,a[href],[role="button"]');
+  const nativeControl=event.target.closest?.('button,a[href],summary,[role="button"]');
   if(event.code==='Space'){
    if(nativeControl&&nativeControl!==launcher)return;
    event.preventDefault();

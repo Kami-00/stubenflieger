@@ -1,12 +1,14 @@
 import { createDuelView } from './duel-view.js';
 import { createDuelAppearancePicker } from './duel-appearance.js';
 import { readViewMode, saveViewMode, updateViewButton } from './view-mode.js';
+import { createMobileSettings, readMobileViewport } from './mobile-settings.js';
 import { DUEL_PLAYER_IDS, DUEL_PLAYER_COLORS } from './duel-arena.js';
 import { DUEL_SESSION_PREFIX, canHostStart, clampAxis, duelInput, duelResultTitle, inviteAddress, inviteRoom, isPilotOut, pilotName, remainingTime } from './duel-controls.js';
 
 const $ = id => document.getElementById(id);
 const show = (id, visible) => { $(id).hidden = !visible; };
 const keys = new Set(), touch = { steer: 0, pitch: 0, fire: false };
+const settingsOpen = () => $('duel-settings').open;
 let view, room = null, token = null, slot = null, name = '', seq = 0;
 let socket = null, phase = 'entry', players = [], hostId = null, snapshot = null, remaining = 180, countdown = 3;
 let stateWinner = null, stateReason = '', busy = false, stopped = false, suspended = false, rematchPending = false;
@@ -65,7 +67,7 @@ function send(message) {
   try { socket.send(JSON.stringify(message)); return true; } catch { return false; }
 }
 function spectating() { return isPilotOut(snapshot?.players?.find(player => player.id === slot), myPlayer()); }
-function currentInput() { return spectating() ? { steer: 0, pitch: 0, fire: false } : duelInput(keys, touch); }
+function currentInput() { return settingsOpen() || spectating() ? { steer: 0, pitch: 0, fire: false } : duelInput(keys, touch); }
 function sendInput(forceNeutral = false) {
   if (phase !== 'playing' || spectating() || !connected() || (!forceNeutral && document.hidden)) return;
   send({ type: 'input', seq: ++seq, ...(forceNeutral ? { steer: 0, pitch: 0, fire: false } : currentInput()) });
@@ -211,10 +213,12 @@ function render() {
   }
   if (lastRenderedPhase !== phase) {
     if (phase !== 'playing') clearInput();
-    if (phase === 'playing') $('duel-canvas').focus({ preventScroll: true });
-    if (phase === 'lobby') $('ready-button').focus({ preventScroll: true });
-    if (phase === 'finished') $('rematch-button').focus({ preventScroll: true });
-    if (phase === 'expired') $('new-duel').focus({ preventScroll: true });
+    if (!settingsOpen()) {
+      if (phase === 'playing') $('duel-canvas').focus({ preventScroll: true });
+      if (phase === 'lobby') $('ready-button').focus({ preventScroll: true });
+      if (phase === 'finished') $('rematch-button').focus({ preventScroll: true });
+      if (phase === 'expired') $('new-duel').focus({ preventScroll: true });
+    }
     lastRenderedPhase = phase;
   }
 }
@@ -372,7 +376,7 @@ $('share-invite').onclick = async () => {
   catch (error) { if (error.name !== 'AbortError') { $('invite-link').focus(); $('invite-link').select(); $('invite-status').textContent = 'Teilen ist gerade nicht möglich. Kopiere den markierten Link.'; } }
 };
 document.addEventListener('keydown', event => {
-  if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
+  if (settingsOpen() || event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return;
   if (event.code === 'KeyV' && ['playing', 'countdown', 'reconnecting'].includes(phase) && !event.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) {
     event.preventDefault(); if (!event.repeat) toggleCamera(); return;
   }
@@ -394,7 +398,7 @@ function moveStick(event) {
   $('duel-stick-knob').style.transform = `translate(${touch.steer * radius}px, ${-touch.pitch * radius}px)`;
 }
 $('duel-stick').addEventListener('pointerdown', event => {
-  if (phase !== 'playing' || spectating() || stickPointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  if (settingsOpen() || phase !== 'playing' || spectating() || stickPointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
   event.preventDefault(); stickPointer = event.pointerId; $('duel-stick').setPointerCapture(stickPointer); moveStick(event);
 });
 $('duel-stick').addEventListener('pointermove', moveStick);
@@ -402,11 +406,11 @@ for (const kind of ['pointerup', 'pointercancel', 'lostpointercapture']) $('duel
   if (event.pointerId !== stickPointer) return; stickPointer = null; touch.steer = touch.pitch = 0; $('duel-stick-knob').style.transform = '';
 });
 $('fire-button').addEventListener('pointerdown', event => {
-  if (phase !== 'playing' || spectating() || firePointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  if (settingsOpen() || phase !== 'playing' || spectating() || firePointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
   event.preventDefault(); firePointer = event.pointerId; $('fire-button').setPointerCapture(firePointer); touch.fire = true; $('fire-button').classList.add('active');
 });
 $('fire-button').addEventListener('click', event => {
-  if (event.detail !== 0 || phase !== 'playing' || spectating()) return;
+  if (settingsOpen() || event.detail !== 0 || phase !== 'playing' || spectating()) return;
   // Keyboard Enter and assistive activation fire a short pulse; pointer/Space hold is handled separately.
   touch.fire = true; $('fire-button').classList.add('active'); clearTimeout(fireReleaseTimer);
   fireReleaseTimer = setTimeout(() => { if (firePointer === null) touch.fire = false; $('fire-button').classList.toggle('active', currentInput().fire); }, 120);
@@ -420,7 +424,27 @@ window.addEventListener('pagehide', () => {
   if (socket) { const old = socket; socket = null; old.close(1000, 'pagehide'); }
 });
 window.addEventListener('pageshow', event => { if (event.persisted) { suspended = false; if (room && token) connectSocket(); } });
-window.addEventListener('resize', () => view?.resize());
+function layout() {
+  clearInput();
+  const { width, height, left, top } = readMobileViewport();
+  Object.assign($('duel-app').style, { width: width + 'px', height: height + 'px', minHeight: height + 'px', left: left + 'px', top: top + 'px' });
+  Object.assign($('duel-canvas').style, { width: width + 'px', height: height + 'px', left: left + 'px', top: top + 'px' });
+  document.documentElement.style.setProperty('--mobile-viewport-height', height + 'px');
+  document.documentElement.style.setProperty('--mobile-viewport-width', width + 'px');
+  view?.resize();
+}
+$('duel-settings-button').onclick = () => {
+  clearInput();
+  if (!settingsOpen()) $('duel-settings').showModal();
+};
+$('duel-close-settings').onclick = () => $('duel-settings').close();
+$('duel-settings').addEventListener('close', clearInput);
+const mobileSettings = createMobileSettings({
+  sideSelect: $('duel-joystick-side'), autoFullscreenInput: $('duel-auto-fullscreen'),
+  fullscreenButton: $('duel-fullscreen-button'), statusNode: $('duel-fullscreen-status'),
+  onSideChange: clearInput, onViewportChange: layout,
+});
+layout();
 setInterval(() => sendInput(), 50);
 setInterval(() => {
   if (suspended || !connected()) return;
@@ -430,7 +454,7 @@ setInterval(() => {
 let lastFrame = performance.now();
 function frame(now) {
   const dt = Math.min(.1, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
-  const active = phase === 'playing' && !spectating() && connected() && !document.hidden && Date.now() - lastStateAt < 1500;
+  const active = phase === 'playing' && !settingsOpen() && !spectating() && connected() && !document.hidden && Date.now() - lastStateAt < 1500;
   if (phase === 'playing' && connected()) {
     const stale = Date.now() - lastStateAt >= 1500;
     show('duel-network', stale);
@@ -442,5 +466,5 @@ function frame(now) {
   view?.update(snapshot, slot, dt, { ...currentInput(), active });
   requestAnimationFrame(frame);
 }
-try { view = createDuelView($('duel-canvas')); view.setCameraMode(cameraMode); requestAnimationFrame(frame); void startFromLocation(); }
+try { view = createDuelView($('duel-canvas'), () => readMobileViewport()); view.setCameraMode(cameraMode); requestAnimationFrame(frame); void startFromLocation(); }
 catch { showError('Die 3D-Ansicht konnte nicht starten. Lade die Seite in einem aktuellen Browser neu.'); $('create-duel').disabled = $('join-duel').disabled = true; }

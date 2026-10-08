@@ -16,3 +16,44 @@
 /* Persistent cosmetics are selected before a round. */
 .appearance-picker{margin:14px 0;padding:14px;border:1px solid #a5c9b34d;border-radius:13px;background:#203b34}.appearance-picker h3{margin:0 0 12px;font-size:16px;color:#ffe0a2}.appearance-picker>label{display:block;margin:12px 0 6px;font-size:12px;color:#d2e3d4}.appearance-color{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.appearance-check{display:flex!important;align-items:center;gap:8px!important;margin:0!important;font-size:12px!important}.appearance-check input[type=checkbox]{width:20px!important;height:20px;min-height:0;margin:0;accent-color:#ffca6a}.appearance-picker input[type=color]{width:60px!important;height:42px;min-height:0!important;padding:3px!important;cursor:pointer;border:1px solid #a5c9b380;border-radius:8px;background:#263c3a}.appearance-picker select{width:100%;min-height:42px;border-radius:8px;padding:8px 10px;background:#263c3a;border:1px solid #a5c9b380;color:#fff3df;font:inherit;font-size:14px}.appearance-picker output{font-size:11px;color:#cbd9d4;min-width:58px}.appearance-swatch{width:24px;height:24px;border:1px solid #ffffff66;border-radius:5px;flex:none}.appearance-picker .small-note{font-size:11px;line-height:1.5;margin:10px 0 0}.appearance-picker input:disabled{opacity:.5;cursor:default}.appearance-picker button{margin:10px 0 0}.pilot-appearance{display:flex;align-items:center;gap:6px;flex-basis:100%;font-size:10px;color:#c5d8cf}.pilot-swatch{display:inline-block;width:11px;height:11px;border:1px solid #ffffff66;border-radius:3px;flex:none}#duel-camera-mode{min-width:49px;font-size:11px;padding:9px}#duel-camera-mode[aria-pressed=true]{border-color:#ffca6a;color:#ffca6a}
 @media(max-width:600px){.duel-header .brand>span:last-child{display:none}.duel-header .header-actions{gap:5px}.duel-header .connection{font-size:10px;max-width:95px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.appearance-picker{padding:11px}.appearance-color{gap:8px}.appearance-picker input[type=color]{width:48px!important}.appearance-picker output{font-size:10px}.pilot-effect{font-size:9px}}
+
+/* Mobile settings remain available without pausing the other pilots. */
+:root{--ui-left:max(12px,env(safe-area-inset-left));--ui-right:max(12px,env(safe-area-inset-right));--ui-top:max(12px,env(safe-area-inset-top));--ui-bottom:max(20px,env(safe-area-inset-bottom));--duel-hud-top:calc(var(--ui-top) + 58px)}
+html,body{overflow:hidden}#duel-app{position:fixed;left:0;top:0;width:100vw;max-width:100vw;height:100dvh;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}#duel-canvas{max-width:100vw;max-height:100dvh}
+button,select,summary,.quiet-button,.text-link{min-height:44px}select:focus-visible,summary:focus-visible{outline:3px solid #ffca6a;outline-offset:3px}
+summary{cursor:pointer;touch-action:manipulation;list-style-position:inside;font-size:13px;font-weight:700;color:#ffda93;padding:13px 0}
+.duel-header{padding:var(--ui-top) var(--ui-right) 12px var(--ui-left);min-height:68px;gap:10px}.brand{min-width:44px;min-height:44px}.quiet-button,.header-actions .quiet-button{min-height:44px}.settings-button{min-width:44px;font-size:18px;padding:8px}
+.screen{min-height:calc(var(--mobile-viewport-height,100dvh) - 80px);padding-bottom:calc(var(--ui-bottom) + 20px)}
+.appearance-details,.rules{margin:12px 0;border-top:1px solid #ffffff26;padding-top:0}.appearance-details .appearance-picker{margin-top:0}.rules p{padding:0 2px}.entry-card .primary{margin-top:14px}.entry-card .appearance-details{margin-top:16px}
+.duel-hud{top:var(--duel-hud-top)}
+.joystick{left:var(--ui-left);right:auto;bottom:calc(var(--ui-bottom) + 22px)}.fire-button{right:var(--ui-right);left:auto;bottom:calc(var(--ui-bottom) + 24px)}
+html[data-joystick-side='right'] .joystick{left:auto;right:var(--ui-right)}html[data-joystick-side='right'] .fire-button{right:auto;left:var(--ui-left)}
+#duel-help{bottom:max(10px,env(safe-area-inset-bottom));left:var(--ui-left);right:var(--ui-right)}
+.settings-dialog{width:min(460px,calc(var(--mobile-viewport-width,100vw) - var(--ui-left) - var(--ui-right)));max-height:calc(var(--mobile-viewport-height,100dvh) - var(--ui-top) - max(12px,env(safe-area-inset-bottom)));padding:0;border:1px solid #fff6e436;border-radius:20px;background:#263c3a;color:#fff6e4;box-shadow:0 24px 90px #11262180;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.settings-dialog::backdrop{background:#102d2ab3;backdrop-filter:blur(8px)}
+.settings-heading{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px 14px;background:#263c3a;border-bottom:1px solid #ffffff26}
+.settings-heading h2{font-size:28px;margin:6px 0 0}.settings-heading .quiet-button{display:flex;align-items:center;gap:8px;flex:none;font-size:11px}.settings-heading .quiet-button span{font-size:22px}
+.settings-content{padding:0 20px 18px}.settings-section{padding:18px 0;border-bottom:1px solid #ffffff26}.settings-section:last-child{border-bottom:0;padding-bottom:0}.settings-section h3{font-size:17px;color:#ffda93;margin:0 0 12px}.settings-section p{font-size:12px;line-height:1.55;margin:8px 0}
+.settings-section label{font-size:13px;margin:9px 0}.settings-section select{display:block;width:100%;min-width:0;min-height:46px;padding:10px 12px;background:#142c2a;color:#fff6e4;border:1px solid #91b5a780;border-radius:10px;font:inherit;font-size:16px}
+.settings-section .setting-check{display:flex;align-items:center;gap:10px;min-height:48px;cursor:pointer;font-size:13px;line-height:1.4}.setting-check input{width:22px;height:22px;min-height:0;flex:none;padding:0;margin:0;accent-color:#ffca6a}
+.settings-help{border-top:1px solid #ffffff26;margin-top:14px}.settings-section #duel-fullscreen-status:empty{display:none}
+.appearance-check{min-height:44px}.appearance-picker input[type=color]{height:44px!important}.appearance-picker select{min-height:44px}
+@media(max-width:850px){
+ .entry-screen{gap:18px;padding-top:10px}.entry-card{order:0}.entry-intro{order:1}.entry-intro h1{font-size:36px;margin:8px 0 12px}.entry-intro .rule-chips{margin-top:12px}.entry-card h2{font-size:29px;margin:12px 0 16px}
+ .duel-hud{width:calc(100% - var(--ui-left) - var(--ui-right));top:var(--duel-hud-top)}
+ .lobby-card .wide,.lobby-card .primary,.lobby-card .invite-row input,.lobby-card .invite-row button{min-height:44px}
+}
+@media(max-width:600px){
+ .duel-header{align-items:center;gap:8px}.duel-header .brand{justify-content:center}.duel-header .header-actions{max-width:none;min-width:0;flex:1;flex-wrap:nowrap;gap:4px}.duel-header .connection{width:auto;max-width:95px;min-width:10px;flex:1 1 70px;text-align:right;font-size:10px}
+ .header-actions .quiet-button{flex:none;font-size:11px;min-height:44px;padding:8px}.header-actions .settings-button{font-size:18px;width:44px;padding:6px}#duel-camera-mode{min-width:44px;width:44px;padding:4px;font-size:10px}
+ .duel-header .brand>span:last-child{display:none}.entry-screen{padding-left:var(--ui-left);padding-right:var(--ui-right)}.entry-intro>p{font-size:13px}.entry-card{padding:18px}.entry-card label{margin-top:12px}.entry-card .eyebrow{font-size:10px}.entry-card h2{font-size:27px}
+ .settings-heading{padding:14px}.settings-content{padding:0 14px 16px}.settings-heading h2{font-size:25px}.settings-heading .eyebrow{font-size:9px;letter-spacing:1px}.settings-heading .quiet-button{gap:6px;padding:8px;font-size:10px}.settings-section{padding:16px 0}
+ .joystick{bottom:calc(var(--ui-bottom) + 22px)}.fire-button{bottom:calc(var(--ui-bottom) + 24px)}#duel-help{font-size:9px;max-width:calc(100% - var(--ui-left) - var(--ui-right))}
+}
+@media(max-height:550px) and (min-aspect-ratio:1/1){
+ .duel-header{padding-bottom:8px}.entry-screen{grid-template-columns:minmax(0,1fr) minmax(280px,1fr);gap:24px;padding-top:8px}.entry-card{grid-column:2;grid-row:1}.entry-intro{grid-column:1;grid-row:1}.entry-intro h1{font-size:38px}
+ .duel-hud{top:var(--duel-hud-top);width:min(580px,calc(100% - var(--ui-left) - var(--ui-right)));gap:4px}.health-card.own{padding:5px 10px}.opponents{gap:4px}.opponent-card{padding:4px 7px}.opponent-state{display:none}
+ .joystick{left:var(--ui-left);right:auto;width:92px;height:92px;bottom:calc(var(--ui-bottom) + 9px)}.joystick>span{left:24px;top:24px}.joystick small{bottom:-16px;font-size:8px}.fire-button{right:var(--ui-right);left:auto;width:82px;height:82px;bottom:calc(var(--ui-bottom) + 11px)}
+ #duel-help{left:130px;right:130px;justify-content:center;text-align:center;font-size:9px}.network-banner{bottom:calc(var(--ui-bottom) + 112px)}.spectator-banner{bottom:var(--ui-bottom);padding:8px 14px}
+ .settings-heading{padding-top:9px;padding-bottom:9px}.settings-heading .eyebrow{display:none}.settings-heading h2{font-size:24px;margin:0}
+}
