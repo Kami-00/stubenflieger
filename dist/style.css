@@ -41,3 +41,4 @@ input:focus-visible,select:focus-visible,#game:focus-visible,#ranking-table:focu
 @container game (max-height:650px) and (min-aspect-ratio:1/1){.launch-panel{max-height:calc(100cqh - 75px)}.stats{top:62px;right:auto;gap:15px}.door-progress{top:139px;right:auto;max-width:350px}.wind-toast{top:70px}.ceiling-warning{top:190px!important}.boost-controls{bottom:82px;right:20px}.shop-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.level-label{display:block}.level-label p{font-size:35px}}
 
 @container game (min-width:851px) and (min-height:651px){.door-progress{top:228px}.ceiling-warning{top:273px!important}.wind-toast{top:272px}}
+.duel-link{display:block;text-align:center;text-decoration:none;padding:12px 14px;border-radius:12px;margin-top:8px;font-weight:700}

@@ -1,6 +1,8 @@
 import { LEVELS, getLevel } from '../src/levels.js';
 import { HOUSE } from '../src/house.js';
 import { calculateRunScore } from '../src/progression.js';
+import { handleDuelRequest } from './duel-api.mjs';
+export { DuelRoom, DuelRateLimit } from './duel-room.mjs';
 
 const json = (data, status = 200) => Response.json(data, {
   status,
@@ -117,6 +119,11 @@ function sameHouseResult(run, result) {
 
 async function handle(request, env) {
   const url = new URL(request.url);
+  if (url.pathname === '/api/duels' || url.pathname.startsWith('/api/duels/')) {
+    try { return await handleDuelRequest(request, env); }
+    catch (error) { console.error(JSON.stringify({ event: 'duel_api_error', name: error.name })); return json({ error: 'Duelle sind gerade nicht erreichbar. Bitte versuche es gleich noch einmal.' }, 503); }
+  }
+  if (request.method === 'GET' && url.pathname === '/duel') return env.ASSETS.fetch(new Request(new URL('/duel.html', url), request));
   if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
   if (request.method === 'GET' && url.pathname === '/api/house-leaderboard') {
     const { results } = await env.DB.prepare(`

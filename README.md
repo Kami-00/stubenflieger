@@ -13,6 +13,21 @@ Ein 3D-Papierflieger-Spiel mit einem zusammenhängenden Haus: Keller, Erdgeschos
 - Sterne liegen auch unter Tischen und Stühlen. Tischplatten, Sitzflächen und Beine haben getrennte Kollisionsformen.
 - Jeder erstmals betretene Raum bringt 250 Extrapunkte pro Run. Der Startraum zählt nicht, Teilrechtecke desselben Raums und wiederholtes Betreten ebenfalls nicht. Bereits gekaufte Türen bezahlen keinen Bonus beim Neustart.
 
+## Privates Online-Duell
+
+Über **1 gegen 1 · Freund einladen** oder `/duel` einen Raum erstellen und den Link an genau einen Mitspieler schicken. Der Link enthält nur die zufällige Raumkennung; die persönlichen Zugangsschlüssel bleiben in der jeweiligen Browsersitzung. Beide Spieler bestätigen ihre Bereitschaft, anschließend beginnt ein Countdown. Nach einer Runde können beide eine Revanche wählen.
+
+- Beide fliegen den Standardflieger bei 100 % mit 100 Lebenspunkten. Shopkäufe und der Solofortschritt beeinflussen das Duell nicht.
+- WASD/Pfeile steuern, die Leertaste feuert. Auf Touchgeräten gibt es einen Steuerknüppel und einen Feuerknopf.
+- Papiergeschosse verursachen 20 Schaden, Hindernisse 10 mit kurzer Erholung. Wände und geschlossene Türen halten Schüsse auf.
+- Bei 0 Leben endet die Runde. Nach drei Minuten gewinnt der Flieger mit mehr Leben; Gleichstand ergibt ein Unentschieden.
+- Geschlossen bleiben alle Türen zum Treppenhaus, Garderobe, Gäste-WC, Abstellraum, alle Kellertüren sowie Bad und Schlafzimmer. Die übrigen Türen sind offen. Offene Fenster und Außenaufwinde bleiben nutzbar; Arbeitszimmer, Kinderzimmer und Dachspitz sind darüber erreichbar.
+- Kurze Verbindungsabbrüche erlauben die Rückkehr in denselben Platz. Beide müssen online sein, damit die Runde weiterläuft. Nach Ablauf der Rückkehrfrist endet sie; leere und abgelaufene Räume werden bereinigt.
+
+Ein SQLite-basiertes Cloudflare Durable Object verwaltet jeweils einen Raum. Positionen, Hinderniskollisionen, Schüsse, Schaden und Ergebnis werden auf dem Server berechnet. Der Browser zeichnet die Welt, glättet empfangene Zustände und sagt nur die eigene Darstellung kurz voraus. Wartende Räume verwenden WebSocket-Hibernation; die Spielsimulation läuft nur während einer aktiven Runde. Die Free-Kontingente für Laufzeit, Nachrichten, Speicher und vorgeschaltete Workers gelten weiterhin.
+
+Die Veröffentlichung benötigt zusätzlich die in `wrangler.jsonc` deklarierte Durable-Objects-Migration. Sie ist von den bestehenden D1-Migrationen getrennt. Ein Deployment im Free-Tarif verwendet SQLite-Durable-Objects und erfordert keine Umstellung auf Workers Paid.
+
 ## Dauerhafter Shop
 
 Alles wird einmal mit erspielten Punkten gekauft und bleibt freigeschaltet:
@@ -52,15 +67,20 @@ Tab und Shift+Tab navigieren durch Schaltflächen. Dialoge halten den Fokus; Ein
 - `src/scene.js`: Darstellung der Hausgeometrie und Effekte. Kamerakorrekturen ändern keine Kollisionen.
 - `src/run.js` / `src/flight.js`: Run-Fortschritt, Räume, Boostladungen und bidirektionale Aufwindhilfe.
 - `src/progression.js` / `src/shop.js`: dauerhaftes Profil und Shop.
-- `worker/index.mjs`: Haus-Bestenliste und unveränderte historische Level-API.
+- `src/duel-arena.js` / `src/duel-flight.js` / `src/duel-simulation.js`: feste Duell-Arena, Flugmodell und verbindliche Trefferberechnung.
+- `src/duel-client.js` / `src/duel-view.js`: Einladung, Steuerung, Lebensbalken und Darstellung der beiden Flieger.
+- `worker/duel-api.mjs` / `worker/duel-room.mjs`: geschützte Räume, WebSockets, Runden und Wiederverbindung.
+- `worker/index.mjs`: Haus-Bestenliste, Duell-Routen und unveränderte historische Level-API.
 
 Die neue Spielszene verwendet die installierten Three.js- und Cannon-Abhängigkeiten. `src/vendor.js` und `src/levels.js` bleiben für die dokumentierte historische Fassung beziehungsweise deren Bestenlistenvalidierung erhalten.
 
 ## Entwicklung und Prüfung
 
-`npm ci` installiert die festgeschriebenen Abhängigkeiten. `npm run build` erzeugt `dist/game.js`, `npm run dev` startet den lokalen Worker. `npm test` prüft Hausaufbau, Fortschritt, Fliegergeometrie, Türen/Fenster, Sternaufnahme, Profil, Steuerung und beide Bestenlisten-APIs.
+`npm ci` installiert die festgeschriebenen Abhängigkeiten. `npm run build` erzeugt `dist/game.js` und `dist/duel.js`, `npm run dev` startet den lokalen Worker. `npm test` prüft Hausaufbau, Fortschritt, Fliegergeometrie, Türen/Fenster, Sternaufnahme, Profil, Steuerung, beide Bestenlisten-APIs sowie Duellsimulation und Raumverwaltung.
 
 `test/integration.mjs` prüft eine echte lokale Worker-/D1-Instanz auf Port 8796. `test/house-browser.cjs` verwendet Playwright mit Edge gegen denselben lokalen Server; `NODE_PATH` kann auf eine vorhandene Playwright-Installation zeigen. Es nutzt einen isolierten Browserkontext mit Testguthaben und lehnt entfernte Server ab.
+
+`test/duel-integration.cjs` prüft zwei echte WebSocket-Verbindungen gegen den lokalen Worker: Sitzplätze, Zugangsschutz, Countdown, Treffer, gleichzeitiges K. o., Revanche, Verbindungsabbruch und Rückkehr. `test/duel-browser.cjs` prüft Einladung und Beitritt in getrennten Browserkontexten, Neuladen, Lebensbalken, Tastatur- und Touchsteuerung sowie die Ansichten bei 320/390 Pixel Breite und im Querformat. Beide Tests lehnen entfernte Server ab. Ein duplizierter Tab wurde zusätzlich mit drei isolierten Browserkontexten geprüft: Der ältere Tab gibt seinen Platz ohne erneuten Verbindungsversuch frei.
 
 Geprüft für die Hausfassung: alle 22 offenen Türen in beide Richtungen, drei offene Seitenfenster, freie Sammelpositionen für alle 96 Sterne auch mit dem kostenlosen Standardflieger, Untertisch-/Stuhlflug, schmale Lücken bei unterschiedlichen Größen, schnelle Wandkontakte, Auf- und Abstieg im Treppenschacht, dauerhafte Käufe, Speicherfehler, Größenregler, zwei Boostplätze, Reload-Abrechnung und Tastaturfokus. Shopdarstellung wurde bei 320 und 390 Pixel Breite, im Querformat und am Desktop geprüft.
 

@@ -73,7 +73,7 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
     const paint = document.createElement('canvas'); paint.width = 256; paint.height = 112; const ctx = paint.getContext('2d');
     ctx.fillStyle = '#f5e5bc'; ctx.fillRect(0, 0, 256, 112);
     ctx.strokeStyle = '#ad8b58'; ctx.lineWidth = 4; ctx.strokeRect(4, 4, 248, 104);
-    ctx.fillStyle = '#463e30'; ctx.font = 'bold 44px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${door.threshold} ★`, 128, 58);
+    ctx.fillStyle = '#463e30'; ctx.font = 'bold 44px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(door.signText ?? `${door.threshold} ★`, 128, 58);
     for (const x of [15, 241]) { ctx.beginPath(); ctx.arc(x, 56, 3, 0, Math.PI * 2); ctx.fill(); }
     const texture = new CanvasTexture(paint); texture.colorSpace = SRGBColorSpace; textures.add(texture);
     const edge = material('#ad8b58', { roughness: .7 });

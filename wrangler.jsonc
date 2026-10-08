@@ -25,6 +25,15 @@
       "migrations_dir": "migrations"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "DUEL_ROOMS", "class_name": "DuelRoom" },
+      { "name": "DUEL_LIMITS", "class_name": "DuelRateLimit" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1duel", "new_sqlite_classes": ["DuelRoom", "DuelRateLimit"] }
+  ],
   "observability": {
     "enabled": true
   }
