@@ -13,6 +13,7 @@ import { getStarReward } from './star-rewards.js';
 import { normalizeAircraftColor } from './cosmetics.js';
 import { applyAircraftColor } from './aircraft-appearance.js';
 import { createAircraftEffects } from './aircraft-effects.js';
+import { buildHouseSurfaceGeometries } from './house-surface-geometry.js';
 
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 const STRUCTURE = new Set(['wall', 'floor', 'roof']);
@@ -35,7 +36,7 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   const boxGeometry = new BoxGeometry(1, 1, 1); geometries.add(boxGeometry);
   const floorGroups = new Map();
   for (const floor of ['ug', 'eg', 'og', 'dg', 'garden']) { const group = new Group(); group.name = `Etage ${floor}`; floorGroups.set(floor, group); scene.add(group); }
-  const structural = [], doorMeshes = new Map(), starMeshes = [], winds = [];
+  const doorMeshes = new Map(), starMeshes = [], winds = [];
   function material(color, options = {}) {
     const key = `${color}:${JSON.stringify(options)}`;
     if (!materials.has(key)) materials.set(key, new MeshStandardMaterial({ color, roughness: .86, flatShading: true, ...options }));
@@ -55,14 +56,18 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   const wood = floorTexture(), grass = floorTexture(true);
   const matrix = new Matrix4(), quaternion = new Quaternion(), euler = new Euler();
   const transform = part => matrix.compose(new Vector3(...part.position), quaternion.setFromEuler(euler.set(...(part.rotation || [0, 0, 0]))), new Vector3(...part.size));
+  const surfaceGeometries = buildHouseSurfaceGeometries(house.obstacles);
+  for (const geometry of surfaceGeometries.values()) geometries.add(geometry);
   const batches = new Map();
   for (const part of house.obstacles) {
     const group = floorGroups.get(part.floor) || floorGroups.get('garden');
     if (STRUCTURE.has(part.kind)) {
-      const mat = material(part.color).clone(); mat.transparent = true;
+      const mat = material(part.color).clone();
       if (part.kind === 'floor') mat.map = part.floor === 'garden' ? grass : wood;
-      const mesh = new Mesh(boxGeometry, mat); mesh.name = part.id; mesh.position.set(...part.position); mesh.scale.set(...part.size); mesh.rotation.set(...(part.rotation || [0, 0, 0]));
-      mesh.castShadow = part.kind !== 'floor'; mesh.receiveShadow = true; group.add(mesh); structural.push({ mesh, part, opacity: 1 });
+      // Shared boundary vertices use world coordinates so neighbouring rotated
+      // parts cannot reopen a tiny seam through independent Float32 transforms.
+      const mesh = new Mesh(surfaceGeometries.get(part.id), mat); mesh.name = part.id;
+      mesh.castShadow = part.kind !== 'floor'; mesh.receiveShadow = true; group.add(mesh);
     } else {
       const key = `${part.floor}|${part.color}|${part.kind === 'glass' ? 'glass' : 'opaque'}`;
       if (!batches.has(key)) batches.set(key, { group, color: part.color, glass: part.kind === 'glass', parts: [] }); batches.get(key).parts.push(part);
@@ -168,18 +173,6 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   }
   const blockMeshes = [];
   for (const block of physics.blocks || []) { const mesh = new Mesh(boxGeometry, material('#dab87f')); mesh.scale.set(...block.size); mesh.castShadow = true; scene.add(mesh); blockMeshes.push(mesh); }
-  const inverse = new Quaternion(), startVector = new Vector3(), endVector = new Vector3(), centre = new Vector3();
-  function cameraCrosses(part, target) {
-    inverse.setFromEuler(euler.set(...(part.rotation || [0, 0, 0]))).invert(); centre.set(...part.position);
-    startVector.copy(camera.position).sub(centre).applyQuaternion(inverse); endVector.copy(target).sub(centre).applyQuaternion(inverse).sub(startVector);
-    let near = 0, far = 1;
-    for (const [i, axis] of ['x', 'y', 'z'].entries()) {
-      const low = -part.size[i] / 2 - .025, high = part.size[i] / 2 + .025, delta = endVector[axis];
-      if (Math.abs(delta) < 1e-7) { if (startVector[axis] < low || startVector[axis] > high) return false; }
-      else { const a = (low - startVector[axis]) / delta, b = (high - startVector[axis]) / delta; near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b)); if (near > far) return false; }
-    }
-    return far > 0 && near < .97;
-  }
   const warnings = { ceiling: false, distance: Infinity, intensity: 0 };
   function updateCeiling(position) {
     const ceiling = typeof physics.getCeilingAt === 'function' ? physics.getCeilingAt(position) : Infinity;
@@ -189,10 +182,9 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
     const position = physics.plane?.position || plane.position, room = getRoomAt(position), indoor = room && room.floor !== 'garden';
     const visibleFloor = floor => !indoor || floor === 'garden' || (FLOORS[floor] ?? -9) <= (FLOORS[room.floor] ?? 0) + 3.15;
     for (const [floor, group] of floorGroups) group.visible = visibleFloor(floor);
-    for (const entry of structural) {
-      const fade = cameraCrosses(entry.part, position), goal = fade ? (entry.part.kind === 'floor' || entry.part.kind === 'roof' ? .07 : .13) : 1;
-      entry.opacity += (goal - entry.opacity) * Math.min(1, Math.max(.02, dt) * 14); entry.mesh.material.opacity = entry.opacity; entry.mesh.material.depthWrite = entry.opacity > .7; entry.mesh.castShadow = entry.part.kind !== 'floor' && entry.opacity > .8;
-    }
+    // Both camera modes already trace against solid geometry. Keep the joined
+    // house shell opaque: proximity fading exposed its hidden contact faces
+    // and made intact floors disappear when flying close to a ceiling.
     for (const entry of doorMeshes.values()) entry.mesh.visible = visibleFloor(entry.door.floor);
     for (let i = 0; i < starMeshes.length; i++) {
       const item = starMeshes[i]; if (item.collected) continue; const starRoom = house.rooms.find(r => r.id === item.data.roomId);

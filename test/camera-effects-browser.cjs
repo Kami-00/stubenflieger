@@ -6,7 +6,7 @@ const path = require('node:path');
 const esbuild = require('esbuild');
 const { chromium } = require('playwright');
 const root = path.resolve(__dirname, '..'), origin = 'http://127.0.0.1:8796';
-const output = 'D:/test/tmp/stubenflieger-camera';
+const output = 'D:/test/tmp/stubenflieger-camera-nose';
 const harness = `
 import {createDuelView} from './src/duel-view.js';
 import {Quaternion,Euler} from 'three';
@@ -29,6 +29,27 @@ window.renderQA={
 };
 window.renderQA.step(1);
 `;
+const noseHarness = `
+import {createScene} from './src/scene.js';
+import {createFlightCamera} from './src/camera.js';
+import {HOUSE} from './src/house.js';
+import {Vector3,Euler} from 'three';
+const physics={house:HOUSE,plane:{position:new Vector3(10,1.4,15)},blocks:[],getCeilingAt:()=>Infinity};
+const view=createScene(document.querySelector('canvas'),physics,()=>({width:1280,height:800}));
+const camera=createFlightCamera(view.camera,{mode:'fpv'});view.sling.visible=false;
+function pixels(){view.render();const gl=view.renderer.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight,data=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,data);return {data,w,h};}
+window.noseQA={
+  render(form,size,color){
+    const def=view.setAircraft(form,size,'none',color);view.plane.position.copy(physics.plane.position);view.plane.quaternion.setFromEuler(new Euler(.07,Math.PI,-.18,'YXZ'));
+    camera.update({position:view.plane.position,quaternion:view.plane.quaternion,length:def.length,model:view.plane});view.update(1/30,0);
+    view.plane.visible=false;const background=pixels();view.plane.visible=true;const foreground=pixels();
+    let changed=0,minX=Infinity,maxX=-1,minY=Infinity,maxY=-1;
+    for(let i=0;i<foreground.data.length;i+=4){const amount=Math.abs(foreground.data[i]-background.data[i])+Math.abs(foreground.data[i+1]-background.data[i+1])+Math.abs(foreground.data[i+2]-background.data[i+2]);if(amount>24){changed++;const p=i/4,x=p%foreground.w,y=foreground.h-1-Math.floor(p/foreground.w);minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}}
+    return {form,size,color,changed,bounds:{minX,maxX,minY,maxY},materials:view.plane.children.map(mesh=>mesh.material.color.getHexString()),near:view.camera.near};
+  },
+};
+window.noseQA.render('classic',1,null);
+`;
 
 (async () => {
   await fs.mkdir(output, { recursive: true });
@@ -42,6 +63,7 @@ window.renderQA.step(1);
   const solo = await esbuild.build({ entryPoints: [path.join(root, 'src/game.js')], bundle: true, write: false, format: 'esm', plugins: [{ name: 'read-only-solo-inspector', setup(build) {
     build.onLoad({ filter: /[\\/]src[\\/]game\.js$/ }, async args => ({ loader: 'js', contents: await fs.readFile(args.path, 'utf8') + `\nwindow.soloRender=()=>view.render();window.soloQA=()=>({state,mode:flightCamera.mode,position:physics.plane.position.toArray(),rotation:[physics.plane.quaternion.x,physics.plane.quaternion.y,physics.plane.quaternion.z,physics.plane.quaternion.w],camera:view.camera.quaternion.toArray(),visible:view.plane.visible,near:view.camera.near,shapes:physics.plane.shapes.map(shape=>shape.vertices.map(v=>v.toArray()))});` }));
   } }] });
+  const noses = await esbuild.build({ stdin: { contents: noseHarness, resolveDir: root }, bundle: true, write: false, format: 'esm' });
   const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--enable-unsafe-swiftshader'] });
   const report = { screenshots: [] }, errors = [];
   let page;
@@ -53,6 +75,8 @@ window.renderQA.step(1);
       if (url.pathname.startsWith('/api/')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ run: 'isolated-local-test', entries: [] }) });
       if (url.pathname === '/__camera-render') return route.fulfill({ contentType: 'text/html', body: '<html><style>html,body,canvas{margin:0;width:100%;height:100%;overflow:hidden}</style><canvas></canvas><div id="duel-reticle"></div><script type="module" src="/__camera-render.js"></script></html>' });
       if (url.pathname === '/__camera-render.js') return route.fulfill({ contentType: 'text/javascript', body: Buffer.from(duel.outputFiles[0].contents) });
+      if (url.pathname === '/__nose-render') return route.fulfill({ contentType: 'text/html', body: '<html><style>html,body,canvas{margin:0;width:100%;height:100%;overflow:hidden}</style><canvas></canvas><script type="module" src="/__nose-render.js"></script></html>' });
+      if (url.pathname === '/__nose-render.js') return route.fulfill({ contentType: 'text/javascript', body: Buffer.from(noses.outputFiles[0].contents) });
       return route.continue();
     });
     await context.addInitScript(() => {
@@ -84,7 +108,7 @@ window.renderQA.step(1);
     const before = await page.evaluate(() => window.soloQA()); assert.equal(before.state, 'flying');
     await page.keyboard.press('v'); await page.evaluate(() => window.frameQA.frames(0));
     const fpv = await page.evaluate(() => window.soloQA());
-    assert.equal(fpv.mode, 'fpv'); assert.equal(fpv.visible, false); assert.equal(fpv.near, .012);
+    assert.equal(fpv.mode, 'fpv'); assert.equal(fpv.visible, true); assert(Math.abs(fpv.near - .3276 * .025) < 1e-10);
     assert.deepEqual(fpv.position, before.position); assert.deepEqual(fpv.rotation, before.rotation); assert.deepEqual(fpv.shapes, before.shapes);
     assert(Math.abs(fpv.camera.reduce((sum, value, i) => sum + value * fpv.rotation[i], 0)) > .9999999);
     await page.evaluate(() => window.soloRender()); await screenshot('solo-fpv-banked');
@@ -102,10 +126,10 @@ window.renderQA.step(1);
     assert.deepEqual(Object.values(five.models).map(model => model.particles), [false, true, true, false, true]);
     await page.evaluate(() => window.renderQA.gallery()); await screenshot('five-independent-aircraft-effects'); report.five = five;
     const multiFpv = await page.evaluate(() => window.renderQA.fpv());
-    assert.deepEqual(Object.values(multiFpv.models).map(model => model.visible), [false, true, true, true, true]);
+    assert.deepEqual(Object.values(multiFpv.models).map(model => model.visible), [true, true, true, true, true]);
     assert(Math.abs(multiFpv.camera.reduce((sum, value, i) => sum + value * multiFpv.models.p1.quaternion[i], 0)) > .9999999);
     const ko = await page.evaluate(() => window.renderQA.ko());
-    assert.equal(ko.following, 'p2'); assert.deepEqual(Object.values(ko.models).map(model => model.visible), [false, false, true, true, true]);
+    assert.equal(ko.following, 'p2'); assert.deepEqual(Object.values(ko.models).map(model => model.visible), [false, true, true, true, true]);
     assert.equal(ko.models.p1.trail, false); assert.equal(ko.models.p1.particles, false);
     await screenshot('spectator-fpv-follows-survivor');
     const multiChase = await page.evaluate(() => window.renderQA.chase());
@@ -117,6 +141,17 @@ window.renderQA.step(1);
     assert(Object.values(rematch.models).every(model => !model.trail && !model.particles));
     assert.equal(await page.evaluate(() => window.renderQA.dispose()), 0);
     report.multiplayer = { fpv: true, spectator: true, eliminatedHidden: true, sparseRematch: true, trailsCleared: true, disposed: true };
+    await page.goto(`${origin}/__nose-render`, { waitUntil: 'domcontentloaded' }); await page.waitForFunction(() => window.noseQA, null, { polling: 100 });
+    report.noses = [];
+    for (const form of ['classic', 'glider', 'dart', 'stunt']) for (const size of [.55, 1, 1.5]) for (const color of [null, '#ef346a', '#000000', '#ffffff']) {
+      const result = await page.evaluate(([form, size, color]) => window.noseQA.render(form, size, color), [form, size, color]);
+      assert(result.changed > 300, `${form}/${size}/${color} must render the actual nose`);
+      assert(result.bounds.minY > 480 && result.bounds.minY < 680, `${form}/${size} should show paper only in the lower view`);
+      assert(result.bounds.minX < 640 && result.bounds.maxX > 640, `${form}/${size} paper should be centred`);
+      if (color) assert.equal(result.materials[0], color.slice(1));
+      report.noses.push(result);
+      if (size === 1 && color === '#ef346a') await screenshot(`fpv-nose-${form}`);
+    }
     assert.deepEqual(errors, []); report.errors = errors; report.passed = true;
     await fs.writeFile(`${output}/camera-effects-browser.json`, JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2));
   } catch (error) {

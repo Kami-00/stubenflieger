@@ -47,7 +47,7 @@ export function createDuelView(canvas) {
   let elapsed = 0, followingId = null;
 
   function resetFlight() {
-    // Restoring the previous FPV model precedes applying authoritative visibility.
+    // Clear the previous follow target before applying authoritative visibility.
     camera.reset(); initialized = false; targets.clear(); oldHp = {}; followingId = null;
     for (const [id, model] of Object.entries(aircraft)) { model.visible = false; model.userData.flightCameraVisible = false; effects[id].clear(); }
     projectileGroup.clear(); balls.clear();

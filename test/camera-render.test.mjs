@@ -5,13 +5,13 @@ import { createFlightCamera } from '../src/camera.js';
 import { createAircraftEffects } from '../src/aircraft-effects.js';
 import { applyAircraftColor } from '../src/aircraft-appearance.js';
 import { aircraftPartColor } from '../src/cosmetics.js';
-import { getAircraftDefinition } from '../src/aircraft.js';
+import { getAircraftDefinition, AIRCRAFT_FORMS } from '../src/aircraft.js';
 import { createPhysics } from '../src/physics.js';
 
 const closeVector = (a, b, epsilon = 1e-10) => assert(a.distanceTo(b) < epsilon, `${a.toArray()} != ${b.toArray()}`);
 const pose = (model = new Group()) => ({ position: new Vector3(2, 1.3, -3), quaternion: new Quaternion().setFromEuler(new Euler(.22, -.73, -.51, 'YXZ')), heading: .73, length: .3276, model, id: model });
 
-test('FPV tracks pitch, heading and bank exactly, hides only its own model, and restores chase', () => {
+test('FPV tracks pitch, heading and bank exactly, keeps the real aircraft visible, and restores chase', () => {
   const camera = new PerspectiveCamera(64, 1, .035, 120), flight = createFlightCamera(camera), plane = pose(), opponent = new Group();
   flight.update(plane, { immediate: true }); const chasePosition = camera.position.clone(), chaseRotation = camera.quaternion.clone();
   for (let i = 0; i < 12; i++) {
@@ -19,7 +19,7 @@ test('FPV tracks pitch, heading and bank exactly, hides only its own model, and 
     assert(camera.quaternion.angleTo(plane.quaternion) < 1e-7);
     closeVector(camera.getWorldDirection(new Vector3()), new Vector3(0, 0, -1).applyQuaternion(plane.quaternion));
     closeVector(new Vector3(0, 1, 0).applyQuaternion(camera.quaternion), new Vector3(0, 1, 0).applyQuaternion(plane.quaternion));
-    assert.equal(camera.near, .012); assert.equal(plane.model.visible, false); assert.equal(opponent.visible, true);
+    assert.equal(camera.near, plane.length * .025); assert.equal(plane.model.visible, true); assert.equal(opponent.visible, true);
     flight.setMode('chase'); flight.update(plane);
     closeVector(camera.position, chasePosition); assert(camera.quaternion.angleTo(chaseRotation) < 1e-7);
     assert.equal(camera.near, .035); assert.equal(plane.model.visible, true);
@@ -36,16 +36,42 @@ test('camera collision tracing stops both modes at opaque geometry, including sm
   camera.position.z = 10; flight.update(plane, { dt: .016 }); assert(camera.position.z < .56, 'smoothed camera must be retraced');
   flight.setMode('fpv'); flight.update(plane); assert(calls.includes(.015)); assert(camera.position.z < 0);
   flight.dispose();
+  const ceiling = createPhysics({ obstacles: [{ id: 'ceiling', kind: 'floor', size: [8, .1, 8], position: [0, 1.075, 0] }], doors: [], start: [0, 1, 0] });
+  const cockpit = createFlightCamera(camera, { mode: 'fpv', traceCamera: ceiling.traceCamera });
+  cockpit.update(plane); assert(camera.position.y < 1.02, 'raised cockpit must stay below a nearby solid ceiling');
+  assert.equal(plane.model.visible, true); cockpit.dispose();
 });
 
-test('FPV spectator changes and reset never restore an eliminated aircraft', () => {
+test('FPV spectator changes preserve authoritative alive and eliminated visibility', () => {
   const camera = new PerspectiveCamera(), flight = createFlightCamera(camera, { mode: 'fpv' }), first = pose(), second = pose();
-  first.model.userData.flightCameraVisible = true; second.model.userData.flightCameraVisible = true;
-  flight.update(first); assert.equal(first.model.visible, false);
-  first.model.userData.flightCameraVisible = false;
-  flight.update(second); assert.equal(first.model.visible, false); assert.equal(second.model.visible, false);
+  flight.update(first); assert.equal(first.model.visible, true);
+  first.model.visible = false;
+  flight.update(second); assert.equal(first.model.visible, false); assert.equal(second.model.visible, true);
   flight.reset(); assert.equal(first.model.visible, false); assert.equal(second.model.visible, true);
   flight.setMode('chase'); assert.equal(camera.near, .1);
+});
+
+test('every real nose stays in the lower view at all sizes without clipping or scale drift', () => {
+  for (const form of AIRCRAFT_FORMS) {
+    let projectedReference;
+    for (const size of [.55, 1, 1.5]) {
+      const definition = getAircraftDefinition(form, size), camera = new PerspectiveCamera(64, 1.6, .035, 120);
+      const plane = pose(); plane.length = definition.length;
+      const flight = createFlightCamera(camera, { mode: 'fpv' }); flight.update(plane);
+      camera.updateMatrixWorld();
+      const nose = definition.parts.find(part => part.id === 'fuselage').vertices.reduce((best, vertex) => vertex[2] < best[2] || (vertex[2] === best[2] && vertex[1] > best[1]) ? vertex : best);
+      const point = new Vector3(...nose).applyQuaternion(plane.quaternion).add(plane.position);
+      const cameraPoint = point.clone().applyMatrix4(camera.matrixWorldInverse), projected = point.project(camera);
+      assert(Math.abs(projected.x) < .001, `${form}/${size} nose should be centred`);
+      assert(projected.y < -.4 && projected.y > -.65, `${form}/${size} nose should be near 75% image height`);
+      assert(-cameraPoint.z > camera.near * 10, `${form}/${size} nose is well beyond the near plane`);
+      const localCamera = camera.position.clone().sub(plane.position).applyQuaternion(plane.quaternion.clone().invert());
+      assert(localCamera.y > Math.max(...definition.parts.flatMap(part => part.vertices.map(vertex => vertex[1]))), 'eye must sit above all actual paper');
+      if (projectedReference) assert(Math.abs(projected.y - projectedReference.y) < 1e-9, 'nose framing must not change with purchased size');
+      else projectedReference = projected;
+      flight.dispose();
+    }
+  }
 });
 
 test('five aircraft colors stay independent and never alter their mesh geometry', () => {

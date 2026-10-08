@@ -10,39 +10,32 @@ export function createFlightCamera(camera, {
   const forward = new Vector3(), goal = new Vector3(), lookGoal = new Vector3(), look = new Vector3();
   const orientation = new Quaternion(), offset = new Vector3();
   let currentMode = mode === 'fpv' ? 'fpv' : 'chase', initialized = false;
-  let followedId = null, hiddenModel = null;
-
-  function restoreModel() {
-    // Visibility supplied by the owner is kept separately from the camera's
-    // override so changing spectator target never resurrects a dead aircraft.
-    if (hiddenModel) hiddenModel.visible = hiddenModel.userData.flightCameraVisible !== false;
-    hiddenModel = null;
-  }
+  let followedId = null, fpvNear = .008;
   function setMode(nextMode) {
     const next = nextMode === 'fpv' ? 'fpv' : 'chase';
-    if (next !== currentMode) { restoreModel(); currentMode = next; initialized = false; }
-    const near = currentMode === 'fpv' ? .012 : initialNear;
+    if (next !== currentMode) { currentMode = next; initialized = false; }
+    const near = currentMode === 'fpv' ? fpvNear : initialNear;
     if (camera.near !== near) { camera.near = near; camera.updateProjectionMatrix(); }
     return currentMode;
   }
-  function reset() { restoreModel(); initialized = false; followedId = null; }
+  function reset() { initialized = false; followedId = null; }
   function update({ position, quaternion, heading, length = .33, model, id = model }, { dt = 1 / 60, immediate = false, ready = false } = {}) {
-    if (id !== followedId || (hiddenModel && model !== hiddenModel)) { restoreModel(); initialized = false; followedId = id; }
+    if (id !== followedId) { initialized = false; followedId = id; }
+    const planeLength = Number.isFinite(length) && length > 0 ? length : .33;
+    fpvNear = Math.min(.012, planeLength * .025);
     setMode(currentMode);
     orientation.copy(quaternion).normalize();
     if (currentMode === 'fpv') {
-      if (model) {
-        if (model !== hiddenModel && model.userData.flightCameraVisible === undefined) model.userData.flightCameraVisible = model.visible;
-        hiddenModel = model; model.visible = false;
-      }
-      offset.set(0, .012, -Math.max(.1, length) * .28).applyQuaternion(orientation);
+      // Sit above the front of the real paper model. Its nose stays in the
+      // lower quarter of the view at every size; the rear wings stay below or
+      // behind the camera. Do not change model visibility: multiplayer owns KO.
+      offset.set(0, planeLength * .14, -planeLength * .12).applyQuaternion(orientation);
       goal.copy(position).add(offset);
       camera.position.copy(traceCamera(position, goal, .015));
       camera.quaternion.copy(orientation);
       initialized = true;
       return;
     }
-    restoreModel();
     camera.up.set(0, 1, 0);
     forward.set(0, 0, -1).applyQuaternion(orientation);
     if (levelChase) {

@@ -73,7 +73,7 @@ Persönlicher Rekord und öffentliche Bestenliste verwenden die festen Werte der
 
 Tab und Shift+Tab navigieren durch Schaltflächen. Dialoge halten den Fokus; Eingabefelder lösen keine Spielkürzel aus. Tab, Fokusverlust und versteckte Browserfenster pausieren einen laufenden Flug. Sensoren erfordern auf einem echten iPhone HTTPS und die ausdrückliche Browserfreigabe. Die Ansicht kann im Menü um jeweils 90° gedreht werden, unabhängig von der iPhone-Rotationssperre.
 
-FPV folgt Blickrichtung, Steigen/Sinken und Schräglage des Flugzeugs. Dabei wird nur das direkt verfolgte Modell verborgen; andere Piloten bleiben sichtbar. Die Kamera prüft Hindernisse, ändert keine Trefferflächen und behält ihre gewählte Ansicht beim Neuladen sowie beim Wechsel zwischen Solo und Mehrspieler.
+FPV folgt Blickrichtung, Steigen/Sinken und Schräglage des Flugzeugs. Die echte Flugzeugspitze bleibt im unteren Bildbereich sichtbar, auch mit eigener Papierfarbe und bei veränderter Größe. Beide Kameraansichten halten Abstand zu Hindernissen; Wände und Böden bleiben auch bei nahen Vorbeiflügen deckend. Die Kamera ändert keine Trefferflächen und behält ihre gewählte Ansicht beim Neuladen sowie beim Wechsel zwischen Solo und Mehrspieler.
 
 ## Aufbau
 
@@ -81,6 +81,7 @@ FPV folgt Blickrichtung, Steigen/Sinken und Schräglage des Flugzeugs. Dabei wir
 - `src/aircraft.js`: gemeinsame sichtbare Geometrie und Kollisionsgeometrie mit geschlossener Mitte. Klassiker mit geraden Flügelenden, spitzer Pfeil, gerundeter Gleiter und rechteckiger Kunstflieger; der Shop zeigt die tatsächlichen Konturen.
 - `src/physics.js`: kontinuierliche Kollisionsprüfung, gedrehte Türblätter, großzügiger Sternfang über die Flügel und den zurückgelegten Flugweg; Wände und geschlossene Türen blockieren auch den Magneten.
 - `src/scene.js`: Darstellung der Hausgeometrie und Effekte. Kamerakorrekturen ändern keine Kollisionen.
+- `src/house-surface-geometry.js`: gemeinsame Außenflächen der Wände, Böden und Dächer ohne doppelte Flächen an Etagen- und Wandstößen. Die ursprünglichen Haus- und Kollisionskörper bleiben erhalten.
 - `src/camera.js` / `src/view-mode.js`: gemeinsame Außen-/FPV-Kamera und gespeicherte Ansicht.
 - `src/cosmetics.js` / `src/aircraft-appearance.js` / `src/aircraft-effects.js`: geprüfte Farbwerte, Papierfaltung und voneinander unabhängige Flugspuren.
 - `src/run.js` / `src/flight.js`: Run-Fortschritt, Räume, Boostladungen und bidirektionale Aufwindhilfe.
@@ -111,6 +112,8 @@ Die neue Spielszene verwendet die installierten Three.js- und Cannon-Abhängigke
 `test/color-shop-browser.cjs` prüft den einmaligen Kauf des Farbwählers, die gemeinsame Papierfarbe von Vorschau und Modell, kostenlose Wechsel, Profilübernahme und Speicherfehler. `test/duel-cosmetics-browser.cjs` prüft mit getrennten Browsern die freigeschaltete Auswahl, gegenseitig sichtbare Lobbyfarben, bestätigte Rundendaten, einen verlorenen Farbwechsel mit Wiederverbindung, FPV-Schalter und mobile Layouts. `test/camera-render.test.mjs` prüft Blickrichtung, Kamerakollision, Zuschauerwechsel sowie getrennte Farben und Effektpuffer aller fünf Flugzeuge.
 
 `test/camera-effects-browser.cjs` prüft den ausgelieferten Solo-Perspektivwechsel und rendert zusätzlich fünf unabhängige Flugzeuge, das FPV-Zuschauen nach K. o. sowie eine Revanche mit den verbleibenden Spielern. Testzugriffe entstehen ausschließlich im lokalen Test-Bundle; die ausgelieferten Dateien enthalten keine Debugschnittstelle.
+
+`test/house-surface-geometry.test.mjs` vergleicht die sichtbare Außenhaut mit den ursprünglichen Hauskörpern und prüft Flächenüberdeckungen, Tür-/Fensteröffnungen und den Treppenschacht. `test/house-surfaces-browser.cjs` vergleicht feste Blicke auf Boden-, Wand- und Dachanschlüsse und prüft ihre Stabilität bei kleinen Kamerabewegungen. Der Kameratest rendert außerdem die echte FPV-Spitze für alle vier Formen, drei Größen und vier Farbvarianten.
 
 Geprüft für die Hausfassung: alle 22 offenen Türen in beide Richtungen, drei offene Seitenfenster, freie Sammelpositionen für alle 96 Sterne auch mit dem kostenlosen Standardflieger, Untertisch-/Stuhlflug, schmale Lücken bei unterschiedlichen Größen, schnelle Wandkontakte, Auf- und Abstieg im Treppenschacht, dauerhafte Käufe, Speicherfehler, Größenregler, zwei Boostplätze, Reload-Abrechnung und Tastaturfokus. Shopdarstellung wurde bei 320 und 390 Pixel Breite, im Querformat und am Desktop geprüft.
 
