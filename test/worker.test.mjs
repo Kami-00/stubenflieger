@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import worker, { validateScore, validateHouseScore } from '../worker/index.mjs';
 import { LEVELS } from '../src/levels.js';
 import { HOUSE } from '../src/house.js';
+import { getStarReward, calculateStarPoints } from '../src/star-rewards.js';
 
 const origin = 'https://stubenflieger.8e4.de';
 const runId = 'da678781-4d31-4274-a69e-799e01ae86de';
@@ -163,14 +164,15 @@ function houseDB({ race = false } = {}) {
         async first() { const row = records.get(this.values[0]); return row ? { ...row } : null; },
         async all() {
           assert.match(sql, /LIMIT 20/); assert.doesNotMatch(sql, /flights_v2|UNION/);
-          return { results: [...records.values()].filter(row => row.name !== null).map(({ name, blocks, stars, rooms, complete, flightMs, points }) => ({ name, blocks, stars, rooms, complete, flightMs, points })) };
+          assert.match(sql, /score_version = \?/);
+          return { results: [...records.values()].filter(row => row.name !== null && (row.scoreVersion ?? 1) === this.values[0]).map(({ name, blocks, stars, rooms, complete, flightMs, points }) => ({ name, blocks, stars, rooms, complete, flightMs, points })) };
         },
         async run() {
-          const [name, blocks, stars, rooms, roomIds, complete, flightMs, points, submitted_at, id] = this.values;
+          const [name, blocks, stars, rooms, roomIds, complete, flightMs, points, submitted_at, starIds, id, scoreVersion] = this.values;
           const row = records.get(id);
-          if (!row || row.name !== null) return { meta: { changes: 0 } };
-          assert.match(sql, /WHERE id = \? AND name IS NULL/);
-          Object.assign(row, { name, blocks, stars, rooms, roomIds, complete, flightMs, points, submitted_at });
+          if (!row || row.name !== null || (row.scoreVersion ?? 1) !== scoreVersion) return { meta: { changes: 0 } };
+          assert.match(sql, /WHERE id = \? AND name IS NULL AND score_version = \?/);
+          Object.assign(row, { name, blocks, stars, rooms, roomIds, complete, flightMs, points, submitted_at, starIds, scoreVersion });
           return { meta: { changes: race ? 0 : 1 } };
         },
       };
@@ -178,8 +180,8 @@ function houseDB({ race = false } = {}) {
     async batch(statements) {
       for (const statement of statements) {
         if (statement.sql.startsWith('INSERT')) {
-          const [id, started_at] = statement.values;
-          records.set(id, { started_at, name: null, blocks: 0, stars: 0, rooms: 0, roomIds: '[]', complete: 0, flightMs: null });
+          const [id, started_at, scoreVersion] = statement.values;
+          records.set(id, { started_at, name: null, blocks: 0, stars: 0, rooms: 0, roomIds: '[]', complete: 0, flightMs: null, scoreVersion, starIds: '[]' });
         }
       }
     },
@@ -224,4 +226,61 @@ test('house results enforce elapsed time, ticket lifetime, origin and concurrent
   assert.equal((await worker.fetch(request('/api/house-leaderboard', houseSample), { DB: db })).status, 400);
   assert.equal((await worker.fetch(request('/api/house-runs', {}, { headers: { origin: 'https://example.invalid' } }), { DB: db })).status, 403);
   assert.equal((await worker.fetch(request('/api/house-runs', [], {}), { DB: db })).status, 400);
+});
+
+const rewardKinds = [[false, false], [true, false], [false, true], [true, true]].map(([under, zone]) => HOUSE.collectibles.find(star => {
+  const reward = getStarReward(star); return reward.under === under && reward.zone === zone;
+}).id);
+const weightedSample = { ...houseSample, scoreVersion: 2, stars: 4, starIds: rewardKinds };
+
+test('weighted house scoring validates identities and applies 150/300/300/450 without wallet bonuses', () => {
+  assert.equal(validateHouseScore({ ...weightedSample, firstDiscoveryBonus: 999999, points: 999999 }).points, 1200 + 500 + 9);
+  assert.equal(validateHouseScore({ ...weightedSample, flightMs: 1_800_000 }).points, 1200 + 500 + 600);
+  assert.equal(validateHouseScore(houseSample).points, 809, 'unversioned clients retain count-only scoring');
+  for (const patch of [
+    { starIds: undefined }, { starIds: 'living-star-1' }, { starIds: rewardKinds.slice(1) },
+    { starIds: [rewardKinds[0], rewardKinds[0], ...rewardKinds.slice(2)] },
+    { starIds: ['unknown', ...rewardKinds.slice(1)] }, { starIds: [{ id: rewardKinds[0] }, ...rewardKinds.slice(1)] },
+    { scoreVersion: 3 }, { scoreVersion: '2' }, { scoreVersion: null }, { scoreVersion: 1 },
+  ]) assert.throws(() => validateHouseScore({ ...weightedSample, ...patch }));
+});
+
+test('house tickets bind score version and retry identity includes the sorted exact star set', async () => {
+  const db = houseDB({ race: true });
+  const legacy = await (await worker.fetch(request('/api/house-runs', {}), { DB: db })).json();
+  const current = await (await worker.fetch(request('/api/house-runs', { scoreVersion: 2 }), { DB: db })).json();
+  assert.equal(legacy.scoreVersion, 1); assert.equal(current.scoreVersion, 2);
+  assert.equal((await worker.fetch(request('/api/house-runs', { scoreVersion: 3 }), { DB: db })).status, 400);
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...weightedSample, run: legacy.run }), { DB: db })).status, 400);
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...houseSample, run: current.run }), { DB: db })).status, 400);
+  const score = { ...weightedSample, run: current.run };
+  const saved = await worker.fetch(request('/api/house-leaderboard', score), { DB: db }); assert.equal(saved.status, 200); assert.equal((await saved.json()).points, 1709);
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...score, starIds: [...score.starIds].reverse() }), { DB: db })).status, 200);
+  const other = HOUSE.collectibles.find(star => !score.starIds.includes(star.id)).id;
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...score, starIds: [other, ...score.starIds.slice(1)] }), { DB: db })).status, 409);
+});
+
+test('old and weighted house rankings remain explicitly separate', async () => {
+  const db = houseDB();
+  for (const [score, name] of [[houseSample, 'Alter Pilot'], [weightedSample, 'Neuer Pilot']]) {
+    const ticket = await (await worker.fetch(request('/api/house-runs', { scoreVersion: score.scoreVersion }), { DB: db })).json();
+    assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...score, name, run: ticket.run }), { DB: db })).status, 201);
+  }
+  for (const [path, name, version] of [['/api/house-leaderboard', 'Alter Pilot', 1], ['/api/house-leaderboard?scoreVersion=2', 'Neuer Pilot', 2]]) {
+    const ranking = await (await worker.fetch(request(path, undefined, { method: 'GET' }), { DB: db })).json();
+    assert.equal(ranking.scoreVersion, version); assert.deepEqual(ranking.entries.map(entry => entry.name), [name]);
+  }
+  assert.equal((await worker.fetch(request('/api/house-leaderboard?scoreVersion=3', undefined, { method: 'GET' }), { DB: db })).status, 400);
+});
+
+test('all house star IDs fit the bounded 8 KiB payload while unrelated endpoints stay at 2 KiB', async () => {
+  const db = houseDB(); const ticket = await (await worker.fetch(request('/api/house-runs', { scoreVersion: 2 }), { DB: db })).json();
+  const allStars = HOUSE.collectibles.map(star => star.id);
+  const score = { ...weightedSample, run: ticket.run, stars: allStars.length, starIds: allStars, roomIds: HOUSE.rooms.map(room => room.id), complete: true };
+  const body = JSON.stringify(score); assert.ok(new TextEncoder().encode(body).byteLength > 2048); assert.ok(new TextEncoder().encode(body).byteLength < 8192);
+  const saved = await worker.fetch(request('/api/house-leaderboard', score), { DB: db }); assert.equal(saved.status, 201);
+  assert.equal((await saved.json()).points, calculateStarPoints(allStars) + validateHouseScore(score).rooms * 250 + 9);
+  assert.equal((await worker.fetch(request('/api/house-leaderboard', { ...score, padding: 'a'.repeat(8192) }), { DB: db })).status, 400);
+  assert.equal((await worker.fetch(request('/api/house-runs', { scoreVersion: 2, padding: 'a'.repeat(2048) }), { DB: db })).status, 400);
+  assert.equal((await worker.fetch(request('/api/runs', { padding: 'a'.repeat(2048) }), { DB: memoryDB() })).status, 400);
 });

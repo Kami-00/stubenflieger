@@ -34,7 +34,7 @@ export function createRunState(house, profile, id = globalThis.crypto.randomUUID
     },
     nextDoor() { return house.doors.filter(door => !opened.has(door.id)).sort((a, b) => a.threshold - b.threshold)[0] || null; },
     summary(seconds = 0, blocks = 0) {
-      return { stars: stars.size, blocks, seconds, roomIds: [...visited].filter(id => id !== startRoom), complete: stars.size === starIds.size };
+      return { stars: stars.size, starIds: [...stars], blocks, seconds, roomIds: [...visited].filter(id => id !== startRoom), complete: stars.size === starIds.size };
     },
   };
 }

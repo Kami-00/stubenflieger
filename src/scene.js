@@ -9,6 +9,7 @@ import {
 } from 'three';
 import { HOUSE, FLOORS, getRoomAt, getDoorPose } from './house.js';
 import { getAircraftDefinition } from './aircraft.js';
+import { getStarReward } from './star-rewards.js';
 
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 const STRUCTURE = new Set(['wall', 'floor', 'roof']);
@@ -104,9 +105,11 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   let effect = 'none', aircraftForm = 'classic', aircraftSize = 1;
   const trailCount = 54, trailPositions = new Float32Array(trailCount * 3);
   const trailGeometry = new BufferGeometry(); trailGeometry.setAttribute('position', new BufferAttribute(trailPositions, 3)); geometries.add(trailGeometry);
-  const trail = new Line(trailGeometry, new LineBasicMaterial({ color: '#fff2d0', transparent: true, opacity: .45, depthWrite: false })); trail.frustumCulled = false; scene.add(trail);
-  const particles = new InstancedMesh(boxGeometry, new MeshStandardMaterial({ color: '#fff6d9', emissive: '#b9954e', emissiveIntensity: .7, transparent: true, opacity: .8, depthWrite: false }), 28);
-  particles.frustumCulled = false; particles.visible = false; scene.add(particles);
+  // Dynamic world-space geometry has no useful fixed sorting centre. Draw its
+  // transparent pass after the ground, while retaining real wall/floor depth.
+  const trail = new Line(trailGeometry, new LineBasicMaterial({ color: '#fff2d0', transparent: true, opacity: .75, depthTest: true, depthWrite: false, toneMapped: false })); trail.frustumCulled = false; trail.renderOrder = 20; scene.add(trail);
+  const particles = new InstancedMesh(boxGeometry, new MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: .9, depthTest: true, depthWrite: false, toneMapped: false }), 28);
+  particles.frustumCulled = false; particles.visible = false; particles.renderOrder = 20; scene.add(particles);
   function setAircraft(form = 'classic', size = 1, nextEffect = 'none') {
     const definition = getAircraftDefinition(form, size); aircraftForm = definition.form; aircraftSize = definition.size; effect = nextEffect || 'none';
     for (const geometry of aircraftGeometries) geometry.dispose(); aircraftGeometries.clear(); for (const mat of aircraftMaterials) mat.dispose(); aircraftMaterials.clear(); plane.clear();
@@ -132,13 +135,39 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   for (let i = 0; i < 10; i++) { const angle = i * Math.PI / 5 + Math.PI / 2, radius = i % 2 ? .052 : .115; const x = Math.cos(angle) * radius, y = Math.sin(angle) * radius; i ? starShape.lineTo(x, y) : starShape.moveTo(x, y); }
   starShape.closePath(); const starGeometry = new ExtrudeGeometry(starShape, { depth: .025, bevelEnabled: false }); geometries.add(starGeometry);
   const haloGeometry = new TorusGeometry(.165, .007, 4, 22); geometries.add(haloGeometry);
-  const starMaterial = new MeshStandardMaterial({ color: '#ffd46c', emissive: '#b26e13', emissiveIntensity: .5, roughness: .42 });
-  const haloMaterial = new MeshBasicMaterial({ color: '#ffdf8a', transparent: true, opacity: .45, depthWrite: false });
+  const starMaterials = [
+    new MeshStandardMaterial({ color: '#ffd46c', emissive: '#b26e13', emissiveIntensity: .8, roughness: .42 }),
+    new MeshStandardMaterial({ color: '#bed9f3', emissive: '#477294', emissiveIntensity: .22, roughness: .42 }),
+  ];
+  const haloMaterials = [
+    new MeshBasicMaterial({ color: '#ffdf8a', transparent: true, opacity: .8, depthWrite: false }),
+    new MeshBasicMaterial({ color: '#b7d6ed', transparent: true, opacity: .45, depthWrite: false }),
+  ];
+  const sparkleMaterial = new MeshBasicMaterial({ color: '#fff1b7', toneMapped: false });
+  for (const mat of [...starMaterials, ...haloMaterials, sparkleMaterial]) materials.set(`star-${mat.id}`, mat);
   for (const data of house.collectibles) {
-    const mesh = new Group(); mesh.name = data.id; mesh.position.set(data.x, data.y, data.z); mesh.add(new Mesh(starGeometry, starMaterial), new Mesh(haloGeometry, haloMaterial)); if (data.under) mesh.scale.setScalar(.72); scene.add(mesh); starMeshes.push({ data, mesh, collected: false });
+    const reward = getStarReward(data), mesh = new Group(), star = new Mesh(starGeometry, starMaterials[0]), rings = [], sparkles = new Group();
+    mesh.name = data.id; mesh.position.set(data.x, data.y, data.z); mesh.add(star, sparkles);
+    for (let i = 0; i < Number(reward.under) + Number(reward.zone); i++) {
+      const ring = new Mesh(haloGeometry, haloMaterials[0]); ring.scale.setScalar(1 + i * .28); rings.push(ring); mesh.add(ring);
+    }
+    for (let i = 0; i < 3; i++) {
+      const glint = new Mesh(starGeometry, sparkleMaterial), angle = i * Math.PI * 2 / 3;
+      glint.position.set(Math.cos(angle) * .17, Math.sin(angle) * .17, .02); glint.scale.setScalar(.16); sparkles.add(glint);
+    }
+    if (data.under) mesh.scale.setScalar(.72);
+    scene.add(mesh); starMeshes.push({ data, mesh, star, rings, sparkles, discovered: false, collected: false });
   }
   function collectStars(predicate) { const ids = []; for (const item of starMeshes) if (!item.collected && predicate(item.data)) { item.collected = true; item.mesh.visible = false; ids.push(item.data.id); } return ids; }
-  function resetCollectibles() { for (const item of starMeshes) { item.collected = false; item.mesh.visible = true; } }
+  function resetCollectibles(discoveredStarIds = []) {
+    const discovered = new Set(discoveredStarIds);
+    for (const item of starMeshes) {
+      item.collected = false; item.mesh.visible = true; item.discovered = discovered.has(item.data.id);
+      item.star.material = starMaterials[Number(item.discovered)];
+      for (const ring of item.rings) ring.material = haloMaterials[Number(item.discovered)];
+      item.sparkles.visible = !item.discovered;
+    }
+  }
   for (const thermal of house.thermals) {
     const ring = new TorusGeometry(thermal.r * .75, .009, 4, 26); geometries.add(ring);
     for (let i = 0; i < 7; i++) { const mesh = new Mesh(ring, new MeshBasicMaterial({ color: '#75d4c6', transparent: true, opacity: .26, depthWrite: false })); mesh.rotation.x = Math.PI / 2; scene.add(mesh); winds.push({ mesh, thermal, phase: i / 7 }); }
@@ -173,7 +202,8 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
     for (const entry of doorMeshes.values()) entry.mesh.visible = visibleFloor(entry.door.floor);
     for (let i = 0; i < starMeshes.length; i++) {
       const item = starMeshes[i]; if (item.collected) continue; const starRoom = house.rooms.find(r => r.id === item.data.roomId);
-      item.mesh.visible = !indoor || starRoom?.floor === room.floor || starRoom?.floor === 'garden'; item.mesh.rotation.y = elapsed * .85 + i * .61; item.mesh.position.y = item.data.y + Math.sin(elapsed * 1.7 + i) * (item.data.under ? .009 : .026);
+      item.mesh.visible = !indoor || starRoom?.floor === room.floor || starRoom?.floor === 'garden'; item.mesh.rotation.y = elapsed * (item.discovered ? .5 : .85) + i * .61; item.mesh.position.y = item.data.y + Math.sin(elapsed * 1.7 + i) * (item.data.under ? .009 : .026);
+      for (let j = 0; j < item.sparkles.children.length; j++) item.sparkles.children[j].scale.setScalar(.09 + .12 * Math.sin(elapsed * 3 + i + j * 2) ** 2);
     }
     for (const item of winds) { const phase = (elapsed * .18 + item.phase) % 1; item.mesh.position.set(item.thermal.x, item.thermal.y + phase * item.thermal.height, item.thermal.z); item.mesh.material.opacity = Math.sin(phase * Math.PI) * .28; item.mesh.visible = Math.abs(item.mesh.position.y - position.y) < 4; }
     for (let i = 0; i < blockMeshes.length; i++) { blockMeshes[i].position.copy(physics.blocks[i].body.position); blockMeshes[i].quaternion.copy(physics.blocks[i].body.quaternion); }

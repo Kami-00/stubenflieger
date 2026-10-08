@@ -32,3 +32,13 @@ test('multiple floor rectangles belonging to one room only earn one visit', () =
   assert.equal(run.enterRoom('hall'), false);
   assert.deepEqual(run.summary().roomIds, ['hall']);
 });
+
+test('summaries carry the distinct collected identities for weighted rewards and pending reload recovery', () => {
+  const run = createRunState(house, profile, 'run-one');
+  run.collect('two'); run.collect('one'); run.collect('two');
+  const summary = run.summary(12, 0);
+  assert.deepEqual(summary.starIds, ['two', 'one']); assert.equal(summary.stars, 2);
+  summary.starIds.length = 0;
+  assert.deepEqual(run.summary().starIds, ['two', 'one'], 'a saved summary cannot mutate the live run');
+  assert.deepEqual(createRunState(house, profile, 'run-two').summary().starIds, []);
+});

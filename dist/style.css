@@ -42,3 +42,7 @@ input:focus-visible,select:focus-visible,#game:focus-visible,#ranking-table:focu
 
 @container game (min-width:851px) and (min-height:651px){.door-progress{top:228px}.ceiling-warning{top:273px!important}.wind-toast{top:272px}}
 .duel-link{display:block;text-align:center;text-decoration:none;padding:12px 14px;border-radius:12px;margin-top:8px;font-weight:700}
+.launch-panel .discovery-copy{color:#ffda93;font-size:13px;font-weight:700;margin:8px 0 3px}.launch-panel .star-key{font-size:11px;line-height:1.45;margin-bottom:10px;color:#cbdce3}.discovery-hud{position:absolute;left:12px;bottom:6px;font-size:10px;color:#cbdce3;letter-spacing:.2px}.stats{padding-bottom:27px}
+.star-reward{position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);z-index:3;max-width:88%;padding:11px 18px;border:1px solid #c9e4f4;border-radius:12px;background:#233a43ee;color:#d4ecff;box-shadow:0 5px 25px #162c3866;font-size:17px;font-weight:800;text-align:center;pointer-events:none}.star-reward[data-first=true]{border-color:#ffd777;color:#ffdc89;background:#443b25ed}
+@container game (max-width:850px){.stats .flight-level{top:auto;bottom:6px;left:auto;right:12px;font-size:9px;letter-spacing:.3px;max-width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:none;color:#ffda93}}
+@container game (max-width:480px){.discovery-hud{font-size:9px}.star-reward{font-size:15px;top:50%}}

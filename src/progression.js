@@ -1,4 +1,5 @@
 import { HOUSE } from './house.js';
+import { calculateStarPoints, getStarReward } from './star-rewards.js';
 
 export const ROOM_BONUS = 250;
 export const PROFILE_KEY = 'stubenflieger.house-profile.v1';
@@ -35,22 +36,25 @@ export function calculateRunScore(summary = {}) {
   const count = value => Number.isInteger(value) && value > 0 ? value : 0;
   const seconds = Number.isFinite(summary.seconds) ? Math.min(60, Math.max(0, summary.seconds)) : 0;
   const visited = new Set(Array.isArray(summary.roomIds) ? summary.roomIds.map(id => roomAliases.get(id)).filter(id => id && id !== startRoom) : []);
-  return count(summary.stars) * 150 + count(summary.blocks) * 100 + Math.floor(seconds * 10) + visited.size * ROOM_BONUS;
+  // Pending flights from before weighted stars only contain a count.
+  const starPoints = Object.hasOwn(summary, 'starIds') ? calculateStarPoints(summary.starIds) : count(summary.stars) * 150;
+  return starPoints + count(summary.blocks) * 100 + Math.floor(seconds * 10) + visited.size * ROOM_BONUS;
 }
 
 function emptyProfile() {
-  return { version: 1, points: 0, highscore: 0, owned: ['plane:classic', 'effect:none'],
-    equipped: { form: 'classic', effect: 'none', boosts: [], size: 1 }, useDoorUnlocks: true, creditedRuns: [] };
+  return { version: 2, points: 0, highscore: 0, owned: ['plane:classic', 'effect:none'],
+    equipped: { form: 'classic', effect: 'none', boosts: [], size: 1 }, useDoorUnlocks: true, creditedRuns: [], discoveredStarIds: [] };
 }
 
 function parseProfile(raw) {
   if (raw === null) return emptyProfile();
   let profile;
   try { profile = JSON.parse(raw); } catch { throw new Error('Dein gespeichertes Profil ist beschädigt. Es wird nicht überschrieben.'); }
-  if (!profile || profile.version !== 1 || !Number.isSafeInteger(profile.points) || profile.points < 0
+  if (!profile || ![1, 2].includes(profile.version) || !Number.isSafeInteger(profile.points) || profile.points < 0
     || !Number.isSafeInteger(profile.highscore) || profile.highscore < 0 || !Array.isArray(profile.owned)
     || !profile.owned.every(id => typeof id === 'string') || !Array.isArray(profile.creditedRuns)
-    || !profile.creditedRuns.every(id => typeof id === 'string') || !profile.equipped) {
+    || !profile.creditedRuns.every(id => typeof id === 'string') || !profile.equipped
+    || (profile.version === 2 && (!Array.isArray(profile.discoveredStarIds) || !profile.discoveredStarIds.every(id => typeof id === 'string')))) {
     throw new Error('Dein gespeichertes Profil konnte nicht gelesen werden. Es wird nicht überschrieben.');
   }
   const owned = [...new Set(['plane:classic', 'effect:none', ...profile.owned])];
@@ -59,8 +63,14 @@ function parseProfile(raw) {
   const effect = items.has(`effect:${equipped.effect}`) && owned.includes(`effect:${equipped.effect}`) ? equipped.effect : 'none';
   const boosts = [...new Set(Array.isArray(equipped.boosts) ? equipped.boosts : [])].filter(id => items.has(`boost:${id}`) && owned.includes(`boost:${id}`)).slice(0, 2);
   const size = owned.includes('upgrade:size') && Number.isFinite(equipped.size) ? Math.min(SIZE_RANGE.max, Math.max(SIZE_RANGE.min, equipped.size)) : 1;
-  return { version: 1, points: profile.points, highscore: profile.highscore, owned, equipped: { form, effect, boosts, size },
-    useDoorUnlocks: profile.useDoorUnlocks !== false, creditedRuns: [...new Set(profile.creditedRuns)] };
+  return { version: 2, points: profile.points, highscore: profile.highscore, owned, equipped: { form, effect, boosts, size },
+    useDoorUnlocks: profile.useDoorUnlocks !== false, creditedRuns: [...new Set(profile.creditedRuns)],
+    // V1 stored no star history. Keep retired IDs so a later house update cannot repay them.
+    discoveredStarIds: profile.version === 2 ? [...new Set(profile.discoveredStarIds)] : [] };
+}
+
+function requireRunId(runId) {
+  if (typeof runId !== 'string' || runId.length < 8 || runId.length > 100) throw new Error('Dieser Run konnte nicht zugeordnet werden.');
 }
 
 /** Browser-local purchases. Persist first, then publish the new state to the UI. */
@@ -114,8 +124,24 @@ export function createProgression(storage) {
       });
     },
     setPermanentDoorsEnabled(enabled) { return change(next => { next.useDoorUnlocks = Boolean(enabled); }); },
+    creditStar(runId, starId) {
+      requireRunId(runId);
+      const reward = getStarReward(starId);
+      refresh();
+      const firstDiscovery = !profile.discoveredStarIds.includes(reward.id);
+      const bonus = firstDiscovery ? reward.basePoints : 0;
+      if (firstDiscovery) {
+        const next = clone(profile);
+        if (!Number.isSafeInteger(next.points + bonus)) throw new Error('Das Punkteguthaben ist zu groß.');
+        next.points += bonus; next.discoveredStarIds.push(reward.id);
+        // One storage write commits both the discovery and its bonus. A failed write commits neither.
+        persist(next);
+      }
+      return { starId: reward.id, firstDiscovery, basePoints: reward.basePoints, bonus,
+        totalPoints: reward.basePoints + bonus, credited: bonus, points: profile.points, duplicate: !firstDiscovery };
+    },
     creditRun(runId, summary) {
-      if (typeof runId !== 'string' || runId.length < 8 || runId.length > 100) throw new Error('Dieser Run konnte nicht zugeordnet werden.');
+      requireRunId(runId);
       refresh();
       const score = calculateRunScore(summary);
       if (!Number.isSafeInteger(score)) throw new Error('Dieses Flugergebnis ist ungültig.');

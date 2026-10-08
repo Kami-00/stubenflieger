@@ -11,6 +11,7 @@ Ein 3D-Papierflieger-Spiel mit einem zusammenhängenden Haus: Keller, Erdgeschos
 - Küche und Esszimmer sind direkt verbunden. Wohn- und Esszimmer besitzen Terrassentüren, dazu kommen Haustür, drei offene Seitenfenster und ein Dachfenster.
 - Türkise Aufwinde führen durchs Treppenhaus und außen nach oben. Im Wirbel hält Steigen oder Sinken den Flieger zur Mitte; seitliches Lenken verlässt ihn.
 - Sterne liegen auch unter Tischen und Stühlen. Tischplatten, Sitzflächen und Beine haben getrennte Kollisionsformen.
+- Goldene, funkelnde Sterne sind dauerhafte Erstfunde; bereits entdeckte Sterne erscheinen silberblau. Ein Ring kennzeichnet einen Wertbonus, zwei Ringe beide Boni. Der Entdeckungszähler bleibt über Runs hinweg erhalten. Jeder Stern zählt weiterhin genau einmal für Türen und erscheint im nächsten Run wieder.
 - Jeder erstmals betretene Raum bringt 250 Extrapunkte pro Run. Der Startraum zählt nicht, Teilrechtecke desselben Raums und wiederholtes Betreten ebenfalls nicht. Bereits gekaufte Türen bezahlen keinen Bonus beim Neustart.
 
 ## Privates Online-Duell
@@ -41,7 +42,16 @@ Alles wird einmal mit erspielten Punkten gekauft und bleibt freigeschaltet:
 
 Guthaben, persönlicher Rekord, Käufe und Ausrüstung liegen im Browser auf diesem Gerät. Sie werden nicht mit anderen Geräten synchronisiert; gelöschte Website-Daten löschen auch das Profil. Schreibfehler werden angezeigt, ohne einen Kauf abzuziehen oder als gespeichert auszugeben. Run-Abrechnungen sind gegen doppelte Gutschrift geschützt. Ein in diesem Tab neu geladenes Spiel rechnet den letzten Zwischenstand aus dem Sitzungsspeicher ab; es setzt den Flug nicht fort.
 
-Punkte: 150 pro Stern, 250 pro neu erreichtem Raum und 10 pro Flugsekunde für maximal 60 Sekunden. Der Punktestand eines Runs wird beim Beenden oder Neustarten dem Guthaben gutgeschrieben. Die Wertungsfunktion unterstützt weiterhin 100 Punkte pro Klotz; im neuen Haus sind derzeit keine Klotztürme platziert.
+| Stern | Erstfund | Spätere Runs |
+| --- | ---: | ---: |
+| Normal | 300 | 150 |
+| Unter Möbeln | 600 | 300 |
+| Keller oder Treppenhaus | 600 | 300 |
+| Unter Möbeln und im Keller/Treppenhaus | 900 | 450 |
+
+Keller und Treppenhaus ergeben zusammen nur einen Ortsbonus. Dazu kommen 250 pro neu erreichtem Raum und 10 pro Flugsekunde für maximal 60 Sekunden. Der zusätzliche Erstfundbonus und die dauerhafte Sternmarkierung werden beim Aufsammeln gemeinsam gespeichert. Basis-, Raum- und Zeitpunkte werden beim Beenden oder Neustarten gutgeschrieben. Scheitert das Speichern eines Erstfunds, bleibt der Stern sammelbar. Alte Profile behalten ihr Geld, Käufe und Ausrüstung; weil bisher keine Stern-IDs gespeichert wurden, beginnt ihre Entdeckungshistorie mit diesem Update. Die Wertungsfunktion unterstützt weiterhin 100 Punkte pro Klotz; im Haus stehen derzeit keine Klotztürme.
+
+Persönlicher Rekord und öffentliche Bestenliste verwenden die festen Werte der rechten Spalte, ohne Erstfundbonus. Die öffentliche Rangliste trennt die neue Sternwertung von historischen Einträgen. Bestehende Einträge und alte, noch offene Flugtickets bleiben erhalten.
 
 ## Steuerung
 
@@ -68,6 +78,7 @@ Tab und Shift+Tab navigieren durch Schaltflächen. Dialoge halten den Fokus; Ein
 - `src/scene.js`: Darstellung der Hausgeometrie und Effekte. Kamerakorrekturen ändern keine Kollisionen.
 - `src/run.js` / `src/flight.js`: Run-Fortschritt, Räume, Boostladungen und bidirektionale Aufwindhilfe.
 - `src/progression.js` / `src/shop.js`: dauerhaftes Profil und Shop.
+- `src/star-rewards.js`: stabile Sternidentitäten und gemeinsame Wertung für Browser und Server.
 - `src/duel-arena.js` / `src/duel-flight.js` / `src/duel-simulation.js`: feste Duell-Arena, Flugmodell und verbindliche Trefferberechnung.
 - `src/duel-client.js` / `src/duel-view.js`: Einladung, Steuerung, Lebensbalken und Darstellung der beiden Flieger.
 - `worker/duel-api.mjs` / `worker/duel-room.mjs`: geschützte Räume, WebSockets, Runden und Wiederverbindung.
@@ -85,6 +96,10 @@ Die neue Spielszene verwendet die installierten Three.js- und Cannon-Abhängigke
 
 `test/duel-client-states.cjs` prüft mit kontrollierten Spielständen und vollständig gesperrter echter Netzwerkverbindung den Wechsel zum Zuschauen, unterbundene Eingaben nach Ausscheiden, Siegeranzeigen sowie eine Revanche mit den verbliebenen IDs p1/p3/p5.
 
+`test/star-browser.cjs` prüft mit einem echten Tastaturflug Erstfund, Wiederholungsfund, Entdeckungszähler, Sofortbonus, Reload-Abrechnung und einen fehlgeschlagenen Speichervorgang. `test/stairwell-continuity.test.mjs` prüft geschlossene Wandübergänge und freie Auf-/Abstiege aller Fliegerformen bei maximaler Größe.
+
+`test/scene-browser.cjs` rendert die echte Szene in einem isolierten lokalen Prüfaufbau: Alle drei Effekte müssen über tatsächlich beschattetem Rasen sichtbar bleiben und hinter einer deckenden Wand verschwinden. Bildvergleiche prüfen Gold/Silberblau und die Wertringe. Die Etagenwände reichen bis zum nächsten Stockwerk; der Flugschacht bleibt offen. Effekte behalten die Tiefenprüfung und werden nach dem Boden gezeichnet.
+
 Geprüft für die Hausfassung: alle 22 offenen Türen in beide Richtungen, drei offene Seitenfenster, freie Sammelpositionen für alle 96 Sterne auch mit dem kostenlosen Standardflieger, Untertisch-/Stuhlflug, schmale Lücken bei unterschiedlichen Größen, schnelle Wandkontakte, Auf- und Abstieg im Treppenschacht, dauerhafte Käufe, Speicherfehler, Größenregler, zwei Boostplätze, Reload-Abrechnung und Tastaturfokus. Shopdarstellung wurde bei 320 und 390 Pixel Breite, im Querformat und am Desktop geprüft.
 
 Diese Prüfungen ersetzen keinen vollständigen manuell geflogenen Haus-Run. Sensorverhalten und tatsächliche Bildrate auf einem physischen iPhone sind noch separat zu prüfen.
@@ -95,7 +110,9 @@ Nach der Tempokorrektur prüft `test/intro-flight.test.mjs` eine echte Flugroute
 
 Die Haus-Runs verwenden `/api/house-runs` und `/api/house-leaderboard`. Die bisherige Level-Bestenliste bleibt erhalten. Der Server prüft Ergebnisse, Laufzeiten, Räume und doppelte Einreichungen und berechnet die Punkte selbst. Die Flugsimulation und das Shopguthaben liegen im Browser; dies ist keine manipulationssichere Turnierwertung.
 
-Die additive Migration `migrations/0002_house_runs.sql` muss vor der Veröffentlichung auf der produktiven Datenbank angewendet werden. Die beiden alten Migrationen bleiben erhalten; keine Tabelle zurücksetzen. Lokale Vorbereitung:
+Neue Hausflüge senden `scoreVersion: 2` und die eindeutigen `starIds`; die Rangliste wird mit `?scoreVersion=2` geladen. Fehlende Version bedeutet weiterhin die historische Hauswertung. Tickets sind an ihre Wertung gebunden. Der Server prüft IDs und Sternanzahl und ignoriert clientseitige Erstfundboni.
+
+Die additiven Migrationen bis einschließlich `migrations/0003_house_score_versions.sql` müssen vor der Veröffentlichung auf der produktiven Datenbank angewendet werden. Alte Migrationen und Tabellen bleiben erhalten. Lokale Vorbereitung:
 
 ```sh
 npx wrangler d1 migrations apply stubenflieger-leaderboard --local

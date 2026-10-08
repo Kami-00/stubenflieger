@@ -97,3 +97,104 @@ test('unreadable or corrupt storage is reported and never silently overwritten',
   assert.equal(denied.getStatus().available, false);
   assert.throws(() => denied.purchase('effect:mint'), /Speichern/);
 });
+
+test('v1 migration preserves money, purchases, equipment and receipts without inventing historical discoveries', () => {
+  const storage = memoryStorage();
+  const old = { version: 1, points: 1234, highscore: 4321, owned: ['plane:classic', 'effect:none', 'plane:glider', 'upgrade:size', 'boost:lift'],
+    equipped: { form: 'glider', effect: 'none', boosts: ['lift'], size: .75 }, useDoorUnlocks: false, creditedRuns: ['already-settled-run'] };
+  storage.data.set(PROFILE_KEY, JSON.stringify(old));
+  const progression = createProgression(storage), profile = progression.getProfile();
+  assert.equal(profile.version, 2); assert.equal(profile.points, old.points); assert.equal(profile.highscore, old.highscore);
+  assert.deepEqual(profile.owned, old.owned); assert.deepEqual(profile.equipped, old.equipped);
+  assert.equal(profile.useDoorUnlocks, false); assert.deepEqual(profile.discoveredStarIds, []);
+  assert.equal(storage.data.get(PROFILE_KEY), JSON.stringify(old), 'reading a v1 profile must not write a migration');
+  assert.equal(progression.creditRun('already-settled-run', { stars: 1 }).credited, 0);
+  const star = progression.creditStar('first-new-run', 'living-star-1');
+  assert.equal(star.bonus, 150); assert.equal(star.points, 1384);
+  const saved = JSON.parse(storage.data.get(PROFILE_KEY));
+  assert.equal(saved.version, 2); assert.deepEqual(saved.creditedRuns, old.creditedRuns);
+  assert.deepEqual(saved.discoveredStarIds, ['living-star-1']);
+});
+
+test('first discovery saves only its bonus immediately, then weighted settlement pays its base once', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  assert.deepEqual(progression.creditStar('weighted-first-run', 'workshop-star-1'), {
+    starId: 'workshop-star-1', firstDiscovery: true, basePoints: 450, bonus: 450, totalPoints: 900, credited: 450, points: 450, duplicate: false,
+  });
+  assert.equal(progression.getProfile().highscore, 0, 'a discovery bonus is never a ranking score');
+  const summary = { stars: 1, starIds: ['workshop-star-1'], roomIds: ['workshop'], seconds: 2.5 };
+  assert.equal(progression.creditRun('weighted-first-run', summary).credited, 725);
+  assert.equal(progression.getProfile().points, 1175); assert.equal(progression.getProfile().highscore, 725);
+  const reloaded = createProgression(storage);
+  assert.equal(reloaded.creditStar('weighted-first-run', 'workshop-star-1').bonus, 0);
+  assert.equal(reloaded.creditRun('weighted-first-run', summary).credited, 0);
+  const repeat = reloaded.creditStar('weighted-second-run', 'workshop-star-1');
+  assert.equal(repeat.firstDiscovery, false); assert.equal(repeat.totalPoints, 450); assert.equal(repeat.credited, 0);
+  assert.equal(reloaded.creditRun('weighted-second-run', summary).credited, 725);
+  assert.equal(reloaded.getProfile().points, 1900); assert.equal(reloaded.getProfile().highscore, 725);
+});
+
+test('discovery survives reload before settlement and a legacy count-only pending run keeps its original score', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  progression.creditStar('interrupted-flight', 'living-star-5');
+  const reloaded = createProgression(storage);
+  assert.deepEqual(reloaded.getProfile().discoveredStarIds, ['living-star-5']);
+  assert.equal(reloaded.creditStar('interrupted-flight', 'living-star-5').bonus, 0);
+  assert.equal(reloaded.creditRun('interrupted-flight', { stars: 1, starIds: ['living-star-5'] }).credited, 300);
+  assert.equal(reloaded.creditRun('old-pending-flight', { stars: 2 }).credited, 300);
+  assert.deepEqual(reloaded.getProfile().discoveredStarIds, ['living-star-5']);
+  assert.equal(reloaded.getProfile().points, 900);
+});
+
+test('failed discovery persistence changes neither money nor history and retry gives exactly one bonus', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  progression.creditRun('seed-receipt-run', { stars: 1 });
+  const before = progression.getProfile(), storedBefore = storage.data.get(PROFILE_KEY);
+  storage.fail = true;
+  assert.throws(() => progression.creditStar('failed-star-run', 'workshop-star-1'), /Speichern/);
+  assert.deepEqual(progression.getProfile(), before); assert.equal(storage.data.get(PROFILE_KEY), storedBefore);
+  storage.fail = false;
+  assert.equal(progression.creditStar('failed-star-run', 'workshop-star-1').bonus, 450);
+  assert.equal(progression.creditStar('failed-star-run', 'workshop-star-1').bonus, 0);
+  assert.equal(progression.getProfile().points, 600);
+});
+
+test('stale profiles refresh discoveries before crediting, and invalid stars cannot change storage', () => {
+  const storage = memoryStorage(), first = createProgression(storage), second = createProgression(storage);
+  first.creditStar('first-tab-run', 'living-star-5');
+  assert.equal(second.creditStar('second-tab-run', 'living-star-5').bonus, 0);
+  second.creditStar('second-tab-run', 'living-star-1');
+  assert.deepEqual(first.refresh().discoveredStarIds, ['living-star-5', 'living-star-1']);
+  assert.equal(first.getProfile().points, 450);
+  const before = storage.data.get(PROFILE_KEY);
+  assert.throws(() => first.creditStar('valid-run-id', 'unknown'));
+  assert.throws(() => first.creditStar('bad', 'living-star-2'));
+  assert.throws(() => first.creditRun('invalid-summary', { stars: 1, starIds: ['unknown'] }));
+  assert.equal(storage.data.get(PROFILE_KEY), before);
+});
+
+test('weighted scoring counts each star once and never treats a malformed ID list as a legacy summary', () => {
+  assert.equal(calculateRunScore({ stars: 999, starIds: ['living-star-1', 'living-star-5', 'workshop-star-1', 'workshop-star-1'] }), 900);
+  assert.equal(calculateRunScore({ stars: 999, starIds: [] }), 0);
+  assert.throws(() => calculateRunScore({ stars: 1, starIds: null }));
+});
+
+test('v2 discovery history remains intact through purchases, including retired house identities', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  fund(progression); progression.creditStar('discovery-run', 'living-star-1');
+  const raw = JSON.parse(storage.data.get(PROFILE_KEY)); raw.discoveredStarIds.push('retired-star-identity');
+  storage.data.set(PROFILE_KEY, JSON.stringify(raw));
+  progression.purchase('effect:mint');
+  assert.deepEqual(createProgression(storage).getProfile().discoveredStarIds, ['living-star-1', 'retired-star-identity']);
+});
+
+test('malformed v2 history is reported rather than silently reset and repaid', () => {
+  const storage = memoryStorage(), progression = createProgression(storage);
+  progression.creditStar('discovery-run', 'living-star-1');
+  const raw = JSON.parse(storage.data.get(PROFILE_KEY)); raw.discoveredStarIds = null;
+  const corrupt = JSON.stringify(raw); storage.data.set(PROFILE_KEY, corrupt);
+  const reloaded = createProgression(storage);
+  assert.equal(reloaded.getStatus().available, false);
+  assert.throws(() => reloaded.creditStar('another-run', 'living-star-1'), /Profil/);
+  assert.equal(storage.data.get(PROFILE_KEY), corrupt);
+});

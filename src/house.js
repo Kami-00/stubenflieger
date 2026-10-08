@@ -56,7 +56,9 @@ function closedWindowCross(id, floor, horizontal, centre, width, height) {
   box(`${id}-cross-vertical`, 'window-bar', horizontal ? [bar, height, depth] : [depth, height, bar], [...centre], '#fffdf5', floor);
 }
 
-function wall(floor, horizontal, fixed, start, end, holes = [], height = 3) {
+// Walls meet the next storey even beside the open stairwell, where a floor
+// slab cannot conceal a short wall's exposed top edge. Roof heights are explicit.
+function wall(floor, horizontal, fixed, start, end, holes = [], height = FLOOR_HEIGHT) {
   const base = FLOORS[floor], color = floor === 'ug' ? '#b5b5a4' : floor === 'dg' ? '#ded0b8' : '#e6dfca';
   const wallId = `${floor}-wall-${horizontal ? 'z' : 'x'}${fixed}-${start}`;
   const segment = (a, b, low, high, kind = 'wall', tint = color) => {

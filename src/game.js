@@ -26,6 +26,7 @@ let heading = 0, speed = 0, verticalSpeed = 0, flightTime = 0, clock = 0, ending
 let chargePointer = null, stickPointer = null, chargeOrigin = { x: 0, y: 0 }, touch = { steer: 0, pitch: 0 }, input = { steer: 0, pitch: 0 };
 let sensorEnabled = false, sensor = null, calibration = null, sensorAt = 0, sensorTimeout, inThermal = false, nearCeiling = false;
 let sound = false, audio, rotation = 0, settled = false, launched = false, storageError = '';
+let firstDiscoveryBonus = 0, rewardUntil = 0, retryStarAt = 0;
 let liftUntil = 0, turboUntil = 0, magnetUntil = 0, cushion = false, recoveryUntil = 0;
 const keys = new Set(), position = new Vector3(), previousPosition = new Vector3(), velocity = new Vector3();
 const direction = new Vector3(), cameraGoal = new Vector3(), lookGoal = new Vector3(), lookAt = new Vector3();
@@ -114,6 +115,7 @@ function releaseInputs() {
 function updateProfileLabels() {
   const profile = progression.getProfile();
   $('wallet').textContent = profile.points.toLocaleString('de-DE') + ' P';
+  for (const node of document.querySelectorAll('[data-discoveries]')) node.textContent = `Entdeckt: ${profile.discoveredStarIds.length} / ${HOUSE.collectibles.length} Sterne`;
   $('aircraft-summary').textContent = `${nameOf('plane:' + profile.equipped.form)} · ${Math.round(profile.equipped.size * 100)} % Größe · ${profile.equipped.boosts.length}/2 Boosts`;
 }
 function applyDoor(id, open) { physics.setDoorOpen(id, open); view.setDoorOpen(id, open); }
@@ -124,7 +126,8 @@ function prepareRun() {
   tuning = flightTuning(equipped.form, equipped.size);
   physics.configureAircraft(equipped.form, equipped.size); physics.reset();
   view.setAircraft(equipped.form, equipped.size, equipped.effect);
-  view.resetCollectibles();
+  view.resetCollectibles(profile.discoveredStarIds);
+  firstDiscoveryBonus = rewardUntil = retryStarAt = 0; show('star-reward', false);
   for (const door of HOUSE.doors) applyDoor(door.id, run.opened.has(door.id));
   settled = launched = false; liftUntil = turboUntil = magnetUntil = recoveryUntil = 0; cushion = false;
   heading = HOUSE.start.heading || 0; speed = verticalSpeed = flightTime = power = dragPower = launchTurn = 0;
@@ -277,7 +280,7 @@ function result() {
   $('result-copy').textContent = endReason;
   $('result-time').textContent = flightTime.toFixed(1) + ' s'; $('result-rooms').textContent = summary.roomIds.length;
   $('result-stars').textContent = `${run.stars.size} / ${HOUSE.collectibles.length}`;
-  $('result-reward').textContent = `+${score.toLocaleString('de-DE')} Punkte · davon ${summary.roomIds.length * ROOM_BONUS} Raumbonus${settled ? ' · gespeichert' : ' · noch nicht gespeichert'}`;
+  $('result-reward').textContent = `+${(score + firstDiscoveryBonus).toLocaleString('de-DE')} Punkte · davon ${firstDiscoveryBonus.toLocaleString('de-DE')} Erstfundbonus und ${summary.roomIds.length * ROOM_BONUS} Raumbonus${settled ? ' · gespeichert' : ' · noch nicht vollständig gespeichert'}`;
   leaderboard.setResult(summary); updateProfileLabels(); keyboard?.clear(); dialogs.open('result', $('again'));
 }
 let leaderboardReturn = 'menu', menuReturn = null, shopReturn = null;
@@ -350,7 +353,7 @@ function updateHUD() {
   const room = getRoomAt(physics.plane.position), summary = run.summary(flightTime), nextDoor = run.nextDoor();
   $('time').textContent = flightTime.toFixed(1) + ' s'; $('height').textContent = physics.plane.position.y.toFixed(1) + ' m';
   $('rooms').textContent = run.visited.size + ' / ' + totalRooms; $('stars').textContent = run.stars.size;
-  $('run-points').textContent = calculateRunScore(summary).toLocaleString('de-DE');
+  $('run-points').textContent = (calculateRunScore(summary) + firstDiscoveryBonus).toLocaleString('de-DE');
   $('flight-level').textContent = (room?.name || 'Über dem Garten').toUpperCase();
   const missing = nextDoor ? Math.max(0, nextDoor.threshold - run.stars.size) : 0;
   $('door-progress').textContent = nextDoor ? `${nextDoor.name}: noch ${missing} ${missing === 1 ? 'Stern' : 'Sterne'}` : 'Alle Türen offen · finde die übrigen Sterne';
@@ -394,6 +397,7 @@ function frame(now) {
   if (!view) return;
   if (paused || dialogs.current()) { view.render(); return; }
   clock += dt;
+  if (rewardUntil && clock > rewardUntil) { rewardUntil = 0; show('star-reward', false); }
   if (state === 'ready') {
     const aim = Number(keys.has('ArrowRight') || keys.has('KeyD')) - Number(keys.has('ArrowLeft') || keys.has('KeyA'));
     launchTurn = clamp(launchTurn + aim * .8 * dt, -.7, .7);
@@ -426,17 +430,34 @@ function frame(now) {
     }
     const contact = physics.advance(dt, velocity, orientation);
     view.plane.position.copy(physics.plane.position); view.plane.quaternion.copy(physics.plane.quaternion);
-    const pickups = view.collectStars(star => physics.canCollectStar(star, previousPosition, clock < magnetUntil ? .75 : 0));
+    const rewards = new Map();
+    const pickups = view.collectStars(star => {
+      if (clock < retryStarAt || !physics.canCollectStar(star, previousPosition, clock < magnetUntil ? .75 : 0)) return false;
+      try {
+        // Persist discovery and its extra wallet credit before removing the star.
+        rewards.set(star.id, progression.creditStar(run.id, star.id));
+        reportStorage(''); return true;
+      } catch (error) {
+        retryStarAt = clock + 1; reportStorage(error.message);
+        $('star-reward').textContent = 'Stern noch nicht gespeichert – bitte Website-Daten erlauben.';
+        $('star-reward').dataset.first = 'false'; rewardUntil = clock + 4; show('star-reward', true);
+        return false;
+      }
+    });
     for (const id of pickups) {
       const opened = run.collect(id);
       if (!opened) continue;
+      const reward = rewards.get(id); firstDiscoveryBonus += reward.bonus;
+      $('star-reward').textContent = reward.firstDiscovery ? `Erstfund! +${reward.totalPoints} Punkte` : `+${reward.totalPoints} Punkte`;
+      $('star-reward').dataset.first = String(reward.firstDiscovery);
+      rewardUntil = clock + 2.5; show('star-reward', true);
       for (const door of opened) applyDoor(door.id, true);
       tone(1100, .1);
       hint(opened.length ? opened.map(door => door.name).join(' · ') + ' ist jetzt offen!' : `Stern gesammelt! ${run.stars.size}/${HOUSE.collectibles.length}`);
     }
     const room = getRoomAt(physics.plane.position);
     if (room && run.enterRoom(room.id)) { hint(`${room.name} entdeckt · +${ROOM_BONUS} Punkte`); tone(880, .2); snapshotRun(); }
-    if (pickups.length) snapshotRun();
+    if (pickups.length) { updateProfileLabels(); updateHUD(); snapshotRun(); }
     if (contact.collided) {
       if (cushion) {
         cushion = false;
