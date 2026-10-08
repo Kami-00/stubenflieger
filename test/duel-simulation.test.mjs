@@ -5,8 +5,8 @@ import { Euler, Quaternion as ThreeQuaternion } from 'three';
 import { HOUSE } from '../src/house.js';
 import { createPhysics } from '../src/physics.js';
 import { flightTuning } from '../src/aircraft.js';
-import { createDuelSimulation, DUEL_HOUSE, DUEL_OPEN_DOORS, DUEL_RULES, DUEL_SPAWNS, sweepDuelProjectile } from '../src/duel-simulation.js';
-import { duelQuaternion, predictDuelPlayer } from '../src/duel-flight.js';
+import { createDuelSimulation, DUEL_HOUSE, DUEL_OPEN_DOORS, DUEL_RULES, DUEL_SPAWNS, DUEL_PLAYER_IDS, DUEL_PLAYER_COLORS, sweepDuelProjectile } from '../src/duel-simulation.js';
+import { duelQuaternion, integrateDuelFlight, predictDuelPlayer } from '../src/duel-flight.js';
 
 const dt = DUEL_RULES.stepSeconds;
 const tuning = flightTuning('classic', 1);
@@ -16,6 +16,7 @@ const box = (id, size, position, rotation = [0, 0, 0]) => ({ id, kind: 'wall', s
 const emptyHouse = (obstacles = [], doors = []) => ({ obstacles, doors, thermals: [], collectibles: [] });
 const parallel = [{ x: 0, y: 1.2, z: 0, heading: 0 }, { x: 20, y: 1.2, z: 0, heading: 0 }];
 const facing = [{ x: -2, y: 1.2, z: 0, heading: Math.PI / 2 }, { x: 2, y: 1.2, z: 0, heading: -Math.PI / 2 }];
+const legacyTerraceSpawns = [{ x: 2, y: 1.2, z: -2, heading: Math.PI / 2 }, { x: 12, y: 1.2, z: -2, heading: -Math.PI / 2 }];
 const pose = (position = { x: 0, y: 0, z: 0 }, quaternion = { x: 0, y: 0, z: 0, w: 1 }) => ({ position, quaternion });
 function advance(sim, seconds, inputs = {}) { let state; for (let i = 0; i < Math.round(seconds / dt); i++) state = sim.step(inputs, dt); return state; }
 
@@ -45,9 +46,9 @@ test('every permanently closed duel door physically blocks its central opening',
   }
 });
 
-test('the real terrace spawns have a clear symmetric approach and five shots produce a simultaneous knockout', () => {
-  const sim = createDuelSimulation();
-  assert.deepEqual(sim.snapshot().players.map(player => player.position), DUEL_SPAWNS.map(({ x, y, z }) => ({ x, y, z })));
+test('a symmetric terrace encounter produces a simultaneous knockout after five shots', () => {
+  const sim = createDuelSimulation({ spawns: legacyTerraceSpawns });
+  assert.deepEqual(sim.snapshot().players.map(player => player.position), legacyTerraceSpawns.map(({ x, y, z }) => ({ x, y, z })));
   const hitTimes = [];
   let previousHp = 100, state;
   for (let i = 0; i < 90; i++) {
@@ -233,4 +234,152 @@ test('quaternion and muzzle agree with the renderer and prediction is bounded an
   const p = state.players[0], shot = state.projectiles[0], direction = new Quaternion(p.quaternion.x, p.quaternion.y, p.quaternion.z, p.quaternion.w).vmult(new Vec3(0, 0, -1));
   const muzzleVector = new Vec3(shot.position.x - p.position.x, shot.position.y - p.position.y, shot.position.z - p.position.z); muzzleVector.normalize();
   assert.ok(muzzleVector.distanceTo(direction) < 1e-12);
+});
+
+test('two, three and five players start far apart, never face directly at each other and have three seconds of free flight', () => {
+  assert.equal(DUEL_RULES.minPlayers, 2); assert.equal(DUEL_RULES.maxPlayers, 5);
+  assert.deepEqual(Object.keys(DUEL_PLAYER_COLORS), DUEL_PLAYER_IDS);
+  assert.equal(new Set(Object.values(DUEL_PLAYER_COLORS)).size, 5);
+  for (const [i, a] of DUEL_SPAWNS.entries()) for (const b of DUEL_SPAWNS.slice(i + 1)) {
+    assert.ok(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) >= 14.5, `${a.id}/${b.id} start distance`);
+    for (const [from, to] of [[a, b], [b, a]]) {
+      const delta = new Vec3(to.x - from.x, to.y - from.y, to.z - from.z); delta.normalize();
+      assert.ok(new Vec3(Math.sin(from.heading), 0, -Math.cos(from.heading)).dot(delta) < Math.cos(.1), `${from.id} must not begin aimed at ${to.id}`);
+    }
+  }
+  for (const count of [2, 3, 5]) for (const control of [{}, flatFire]) {
+    const playerIds = DUEL_PLAYER_IDS.slice(0, count), sim = createDuelSimulation({ playerIds });
+    assert.deepEqual(sim.snapshot().players.map(player => player.id), playerIds);
+    for (let i = 0; i < 90; i++) {
+      const state = sim.step(Object.fromEntries(playerIds.map(id => [id, control])));
+      assert.equal(state.winner, null);
+      for (const player of state.players) {
+        assert.equal(player.hp, 100, `${player.id} has a clear initial path`);
+        assert.equal(player.recovering, false); assert.equal(player.eliminated, false);
+      }
+    }
+  }
+});
+
+test('sparse player IDs keep their own spawn and unsupported participant lists are rejected', () => {
+  const ids = ['p1', 'p3', 'p5'];
+  const sim = createDuelSimulation({ playerIds: ids });
+  assert.deepEqual(sim.snapshot().players.map(player => player.id), ids);
+  sim.snapshot().players.forEach(player => {
+    const spawn = DUEL_SPAWNS.find(item => item.id === player.id);
+    assert.deepEqual(player.position, { x: spawn.x, y: spawn.y, z: spawn.z });
+  });
+  for (const playerIds of [[], ['p1'], ['p1', 'p1'], ['p1', 'p6'], [...DUEL_PLAYER_IDS, 'p6'], 'p1,p2']) {
+    assert.throws(() => createDuelSimulation({ playerIds }), TypeError);
+  }
+  assert.throws(() => createDuelSimulation({ playerIds: ids, spawns: parallel }), TypeError);
+  assert.throws(() => createDuelSimulation({ spawns: [parallel[0], { ...parallel[1], x: NaN }] }), TypeError);
+});
+
+test('the first knockout leaves a three-player round running and eliminated aircraft ignore all further controls', () => {
+  const sim = createDuelSimulation({ house: emptyHouse(), playerIds: ['p1', 'p3', 'p5'], spawns: [...legacyTerraceSpawns, { x: 40, y: 1.2, z: 0, heading: 0 }] });
+  let state;
+  for (let i = 0; i < 90; i++) {
+    state = sim.step({ p1: flatFire, p3: levelInput, p5: levelInput });
+    if (state.players[1].hp === 0) break;
+  }
+  assert.equal(state.players[1].hp, 0);
+  assert.equal(state.players[1].eliminated, true);
+  assert.equal(state.winner, null);
+  const dead = structuredClone(state.players[1]);
+  state = advance(sim, 1, { p1: levelInput, p3: { steer: 1, pitch: 1, fire: true }, p5: levelInput });
+  assert.deepEqual(state.players[1], dead);
+  assert.equal(state.projectiles.some(shot => shot.owner === 'p3'), false);
+  assert.deepEqual(predictDuelPlayer(dead, flatFire, .1), dead);
+  const final = sim.eliminate('p1');
+  assert.equal(final.winner, 'p5'); assert.equal(final.reason, 'disconnect');
+});
+
+test('a projectile hits the nearest living opponent even when a farther opponent comes first in the participant array', () => {
+  // All travel in the same direction, so the near/far ordering remains stable.
+  const spawns = [
+    { x: 0, y: 1.2, z: 0, heading: Math.PI / 2 },
+    { x: 4, y: 1.2, z: 0, heading: Math.PI / 2 },
+    { x: 2, y: 1.2, z: 0, heading: Math.PI / 2 },
+  ];
+  for (const deadNear of [false, true]) {
+    const sim = createDuelSimulation({ house: emptyHouse(), playerIds: ['p1', 'p3', 'p5'], spawns });
+    if (deadNear) sim.eliminate('p5');
+    sim.step({ p1: flatFire, p3: levelInput, p5: levelInput });
+    const state = advance(sim, .7, { p1: levelInput, p3: levelInput, p5: levelInput });
+    assert.deepEqual(state.players.map(player => player.hp), deadNear ? [100, 80, 0] : [100, 100, 80]);
+  }
+});
+
+test('walls take priority over all five possible targets', () => {
+  const spawns = DUEL_PLAYER_IDS.map((id, i) => ({ x: i * 2, y: 1.2, z: 0, heading: Math.PI / 2 }));
+  const sim = createDuelSimulation({ house: emptyHouse([box('shield', [.008, 5, 5], [1, 1.2, 0])]), playerIds: DUEL_PLAYER_IDS, spawns });
+  sim.step({ p1: flatFire });
+  const state = advance(sim, .7, Object.fromEntries(DUEL_PLAYER_IDS.map(id => [id, levelInput])));
+  assert.deepEqual(state.players.slice(1).map(player => player.hp), [100, 100, 100, 100]);
+  assert.equal(state.projectiles.length, 0);
+});
+
+test('disconnect elimination is idempotent and simultaneous final disconnects resolve atomically', () => {
+  const spawns = DUEL_PLAYER_IDS.map((id, i) => ({ x: i * 20, y: 1.2, z: 0, heading: 0 }));
+  const sim = createDuelSimulation({ house: emptyHouse(), playerIds: DUEL_PLAYER_IDS, spawns });
+  const first = sim.eliminate('p3');
+  assert.equal(first.winner, null);
+  assert.deepEqual(sim.eliminate('p3'), first);
+  assert.deepEqual(sim.eliminate('unknown'), first);
+  assert.equal(sim.eliminateMany(['p2', 'p5']).winner, null);
+  const final = sim.eliminateMany(['p1', 'p4']);
+  assert.equal(final.winner, 'draw'); assert.equal(final.reason, 'disconnect');
+  assert.ok(final.players.every(player => player.eliminated));
+  assert.deepEqual(sim.eliminateMany(DUEL_PLAYER_IDS), final);
+  const reset = sim.reset();
+  assert.equal(reset.winner, null); assert.equal(reset.tick, 0);
+  assert.ok(reset.players.every(player => player.hp === 100 && !player.eliminated));
+});
+
+test('FFA timeout requires a unique highest HP and ignores eliminated participants', () => {
+  const ids = ['p1', 'p3', 'p5'];
+  const spawn = (x, z = 0) => ({ x, y: 1.2, z, heading: Math.PI / 2 });
+  for (const tie of [false, true]) {
+    const sim = createDuelSimulation({ house: emptyHouse(), playerIds: ids, spawns: [spawn(0), spawn(2), spawn(40, 20)] });
+    sim.step({ p1: flatFire, p3: levelInput, p5: levelInput });
+    advance(sim, .5, Object.fromEntries(ids.map(id => [id, levelInput])));
+    if (!tie) sim.eliminate('p5');
+    const result = advance(sim, DUEL_RULES.roundSeconds, Object.fromEntries(ids.map(id => [id, levelInput])));
+    assert.equal(result.reason, 'timeout');
+    assert.equal(result.winner, tie ? 'draw' : 'p1');
+    assert.deepEqual(result.players.map(player => player.hp), [100, 80, tie ? 100 : 0]);
+  }
+});
+
+test('shared static physics keeps independent five-player poses and fixed-tick results', () => {
+  const spawns = DUEL_PLAYER_IDS.map((id, i) => ({ x: i * 20, y: 1.2, z: i, heading: i * .5 }));
+  const a = createDuelSimulation({ house: emptyHouse(), playerIds: DUEL_PLAYER_IDS, spawns });
+  const b = createDuelSimulation({ house: emptyHouse(), playerIds: DUEL_PLAYER_IDS, spawns });
+  const pair = createDuelSimulation({ house: emptyHouse(), spawns: spawns.slice(0, 2) });
+  for (let i = 0; i < 90; i++) {
+    const inputs = Object.fromEntries(DUEL_PLAYER_IDS.map((id, index) => [id, { steer: Math.sin(i / 5 + index), pitch: Math.cos(i / 8 + index), fire: i % 4 === index }]));
+    a.step(inputs); a.step(inputs); b.step(inputs, 2 * dt); pair.step(inputs, 2 * dt);
+    assert.deepEqual(a.snapshot().players.slice(0, 2), pair.snapshot().players, 'other poses cannot leak through the shared collision cursor');
+  }
+  assert.deepEqual(a.snapshot(), b.snapshot());
+});
+
+test('five-player collision sweeps match an isolated physics body through a banked wall strike', () => {
+  const house = emptyHouse([box('wall', [10, 5, .02], [0, 1.2, 0])]);
+  const spawns = DUEL_PLAYER_IDS.map((id, index) => ({ x: index * 20, y: 1.2, z: .8, heading: index * .4 }));
+  const shared = createDuelSimulation({ house, playerIds: DUEL_PLAYER_IDS, spawns });
+  const isolated = createPhysics({ ...house, start: spawns[0] });
+  let pilot = shared.snapshot().players[0], hit = false;
+  for (let i = 0; i < 60; i++) {
+    const inputs = Object.fromEntries(DUEL_PLAYER_IDS.map((id, index) => [id, { steer: index === 0 ? .12 : Math.sin(i + index), pitch: index * .17 }]));
+    const movement = integrateDuelFlight(pilot, inputs.p1, dt, house);
+    const contact = isolated.advance(dt, new Vec3(movement.velocity.x, movement.velocity.y, movement.velocity.z), movement.quaternion);
+    const actual = shared.step(inputs).players[0];
+    for (const axis of ['x', 'y', 'z']) assert.ok(Math.abs(actual.position[axis] - isolated.plane.position[axis]) < 1e-12);
+    for (const axis of ['x', 'y', 'z', 'w']) assert.ok(Math.abs(actual.quaternion[axis] - isolated.plane.quaternion[axis]) < 1e-12);
+    pilot = { ...pilot, ...movement, position: { ...actual.position } };
+    if (contact.collided) { assert.equal(actual.hp, 90); assert.equal(actual.recovering, true); hit = true; break; }
+  }
+  assert.equal(hit, true, 'the shared cursor must detect the wall after being used by four distant aircraft');
 });

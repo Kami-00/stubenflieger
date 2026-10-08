@@ -34,7 +34,7 @@ export function integrateDuelFlight(player, requested, dt, house = DUEL_HOUSE) {
 export function predictDuelPlayer(player, requested, seconds) {
   let remaining = Number.isFinite(seconds) ? clamp(seconds, 0, .1) : 0;
   let next = { ...player, position: { ...player.position }, quaternion: { ...player.quaternion }, input: { ...(player.input || {}) } };
-  if (player.recovering) return next;
+  if (player.recovering || player.eliminated || player.hp <= 0) return next;
   while (remaining > 1e-9) {
     const dt = Math.min(remaining, DUEL_RULES.stepSeconds), movement = integrateDuelFlight(next, requested, dt);
     next = { ...next, ...movement, position: { x: next.position.x + movement.velocity.x * dt, y: next.position.y + movement.velocity.y * dt, z: next.position.z + movement.velocity.z * dt } };

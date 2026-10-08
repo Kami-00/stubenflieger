@@ -1,20 +1,35 @@
 import { createDuelView } from './duel-view.js';
-import { DUEL_SESSION_PREFIX, clampAxis, duelInput, inviteAddress, inviteRoom, pilotName, remainingTime } from './duel-controls.js';
+import { DUEL_PLAYER_IDS, DUEL_PLAYER_COLORS } from './duel-arena.js';
+import { DUEL_SESSION_PREFIX, canHostStart, clampAxis, duelInput, duelResultTitle, inviteAddress, inviteRoom, isPilotOut, pilotName, remainingTime } from './duel-controls.js';
 
 const $ = id => document.getElementById(id);
 const show = (id, visible) => { $(id).hidden = !visible; };
 const keys = new Set(), touch = { steer: 0, pitch: 0, fire: false };
 let view, room = null, token = null, slot = null, name = '', seq = 0;
-let socket = null, phase = 'entry', players = [], snapshot = null, remaining = 180, countdown = 3;
+let socket = null, phase = 'entry', players = [], hostId = null, snapshot = null, remaining = 180, countdown = 3;
 let stateWinner = null, stateReason = '', busy = false, stopped = false, suspended = false, rematchPending = false;
 let reconnectTimer, reconnectAttempt = 0, reconnectUntil = 0, lastMessageAt = 0, lastStateAt = 0, ping = null;
 let stickPointer = null, firePointer = null, feedbackTimer, shotTimer, hitTimer, damageTimer, fireReleaseTimer;
-let lastHealth = new Map(), projectileIds = new Set(), lastRenderedPhase = 'entry', operation = 0;
+let lastHealth = new Map(), projectileIds = new Set(), lastRenderedPhase = 'entry', operation = 0, wasSpectating = false;
+const lobbyCards = new Map(), opponentCards = new Map();
+function element(tag, className, text) {
+  const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
+}
+for (const [index, id] of DUEL_PLAYER_IDS.entries()) {
+  const card = element('div', 'pilot-card'); card.id = `lobby-${id}`; card.style.setProperty('--player-color', DUEL_PLAYER_COLORS[id]);
+  const identity = element('div', 'pilot-identity'); identity.append(element('strong', 'pilot-name'), element('span', 'host-badge', 'Gastgeber'));
+  card.append(element('span', 'pilot-number', String(index + 1).padStart(2, '0')), identity, element('span', 'pilot-state'));
+  $('lobby-players').append(card); lobbyCards.set(id, card);
+  const opponent = element('div', 'opponent-card'); opponent.id = `health-${id}`; opponent.style.setProperty('--player-color', DUEL_PLAYER_COLORS[id]);
+  const heading = element('div', 'opponent-heading'); heading.append(element('span', 'opponent-label'), element('strong', 'opponent-hp'));
+  const meter = element('div', 'health-meter'); meter.setAttribute('role', 'meter'); meter.setAttribute('aria-valuemin', '0'); meter.setAttribute('aria-valuemax', '100'); meter.append(element('span'));
+  opponent.append(heading, meter, element('span', 'opponent-state')); $('opponents').append(opponent); opponentCards.set(id, opponent);
+}
 
 function showError(message = '') { $('duel-errors').textContent = message; show('duel-errors', Boolean(message)); }
 function warning(message) { $('session-warning').textContent = message; show('session-warning', Boolean(message)); }
 function feedback(message) {
-  clearTimeout(feedbackTimer); $('duel-feedback').textContent = message;
+  clearTimeout(feedbackTimer); $('duel-feedback').textContent = phase === 'playing' ? message : '';
   feedbackTimer = setTimeout(() => { $('duel-feedback').textContent = ''; }, 1400);
 }
 function saveSession() {
@@ -34,9 +49,10 @@ function send(message) {
   if (!connected()) return false;
   try { socket.send(JSON.stringify(message)); return true; } catch { return false; }
 }
-function currentInput() { return duelInput(keys, touch); }
+function spectating() { return isPilotOut(snapshot?.players?.find(player => player.id === slot), myPlayer()); }
+function currentInput() { return spectating() ? { steer: 0, pitch: 0, fire: false } : duelInput(keys, touch); }
 function sendInput(forceNeutral = false) {
-  if (phase !== 'playing' || !connected() || (!forceNeutral && document.hidden)) return;
+  if (phase !== 'playing' || spectating() || !connected() || (!forceNeutral && document.hidden)) return;
   send({ type: 'input', seq: ++seq, ...(forceNeutral ? { steer: 0, pitch: 0, fire: false } : currentInput()) });
 }
 function clearInput() {
@@ -49,11 +65,10 @@ function clearInput() {
   sendInput(true);
 }
 function myPlayer() { return players.find(player => player.id === slot); }
-function otherPlayer() { return players.find(player => player.id !== slot); }
 function statusText() {
   const status = $('connection-status');
   status.className = 'connection';
-  if (!room) { status.textContent = 'Für zwei Piloten'; return; }
+  if (!room) { status.textContent = 'Für 2–5 Piloten'; return; }
   if (connected()) {
     status.classList.add('online'); status.textContent = ping === null ? 'Verbunden' : `Verbunden · ${ping} ms`;
   } else {
@@ -62,24 +77,35 @@ function statusText() {
 }
 function renderHealth() {
   const participants = snapshot?.players || [];
-  for (const [prefix, id, fallback] of [['own', slot, 'Du'], ['opponent', slot === 'p1' ? 'p2' : 'p1', 'Gegenüber']]) {
-    const identity = players.find(player => player.id === id), plane = participants.find(player => player.id === id);
-    const hp = Math.max(0, Math.min(100, Math.round(plane?.hp ?? 100))), label = identity?.name || fallback;
-    $(`${prefix}-name`).textContent = label + (prefix === 'own' ? ' · DU' : '');
-    $(`${prefix}-hp`).textContent = hp;
-    const meter = $(`${prefix}-meter`);
+  const health = (plane, identity) => identity?.left || identity?.eliminated || plane?.eliminated ? 0 : Math.max(0, Math.min(100, Math.round(plane?.hp ?? 100)));
+  function updateMeter(meter, hp, label) {
     meter.setAttribute('aria-label', `${label}: Lebenspunkte`); meter.setAttribute('aria-valuenow', hp);
     meter.setAttribute('aria-valuetext', `${hp} von 100 Lebenspunkten`);
     meter.firstElementChild.style.width = `${hp}%`; meter.classList.toggle('low', hp <= 30);
   }
+  const own = myPlayer(), ownPlane = participants.find(player => player.id === slot), ownHp = health(ownPlane, own);
+  $('own-name').textContent = `${own?.name || 'Du'} · DU`; $('own-hp').textContent = ownHp;
+  $('own-card').style.setProperty('--player-color', DUEL_PLAYER_COLORS[slot] || DUEL_PLAYER_COLORS.p1);
+  $('own-card').classList.toggle('is-out', isPilotOut(ownPlane, own)); updateMeter($('own-meter'), ownHp, own?.name || 'Du');
+  for (const [id, card] of opponentCards) {
+    const identity = players.find(player => player.id === id), plane = participants.find(player => player.id === id);
+    card.hidden = id === slot || (!identity && !plane);
+    if (card.hidden) continue;
+    const hp = health(plane, identity), out = isPilotOut(plane, identity), label = identity?.name || 'Pilot';
+    card.querySelector('.opponent-label').textContent = label; card.querySelector('.opponent-label').title = label;
+    card.querySelector('.opponent-hp').textContent = hp; updateMeter(card.querySelector('.health-meter'), hp, label);
+    card.classList.toggle('is-out', out);
+    card.querySelector('.opponent-state').textContent = identity?.left ? 'Verlassen' : out ? 'Ausgeschieden' : identity?.connected === false ? 'Verbindung fehlt' : 'Im Flug';
+  }
+  const alive = participants.filter(plane => !isPilotOut(plane, players.find(player => player.id === plane.id))).length;
+  $('remaining-pilots').textContent = `${alive || (phase === 'countdown' ? players.filter(player => !player.left).length : 0)} im Flug`;
   $('duel-time').textContent = remainingTime(remaining);
 }
 function resultCopy() {
   const winner = stateWinner ?? snapshot?.winner;
-  const opponent = otherPlayer()?.name || 'Dein Gegenüber';
   if (phase === 'expired' && stateReason === 'replaced') return { title: 'Du fliegst im anderen Fenster.', text: 'Dein Platz ist dort aktiv. Spiele dort weiter oder eröffne hier ein neues Duell.' };
   if (phase === 'expired') return { title: 'Dieses Duell ist beendet.', text: 'Der Raum ist nicht mehr verfügbar. Eröffne ein neues Duell und teile eine frische Einladung.' };
-  const title = winner === 'draw' || !winner ? 'Unentschieden.' : winner === slot ? 'Du hast gewonnen!' : `${opponent} gewinnt.`;
+  const title = duelResultTitle(winner, players, slot);
   const reasons = {
     timeout: 'Die drei Minuten sind um. Die verbleibenden Lebenspunkte entscheiden.',
     time: 'Die drei Minuten sind um. Die verbleibenden Lebenspunkte entscheiden.',
@@ -88,23 +114,30 @@ function resultCopy() {
     leave: 'Ein Pilot hat das laufende Duell verlassen.',
     left: 'Ein Pilot hat das laufende Duell verlassen.',
     forfeit: 'Ein Pilot hat das laufende Duell verlassen.',
-    health: 'Ein Flugzeug hat keine Lebenspunkte mehr.',
-    damage: 'Ein Flugzeug hat keine Lebenspunkte mehr.',
-    knockout: 'Ein Flugzeug hat keine Lebenspunkte mehr.',
+    health: 'Die letzten Treffer haben die Runde entschieden.',
+    damage: 'Die letzten Treffer haben die Runde entschieden.',
+    knockout: 'Die letzten Treffer haben die Runde entschieden.',
+    last_alive: 'Nur ein Flugzeug ist noch in der Luft. Die Runde ist entschieden.',
     server_restart: 'Das Duell wurde durch einen Neustart unterbrochen und endet unentschieden. Ihr könnt gemeinsam eine neue Runde beginnen.',
     server_error: 'Das Duell musste wegen eines Verbindungsfehlers beendet werden und wird als unentschieden gewertet. Ihr könnt eine neue Runde versuchen.',
   };
-  return { title, text: reasons[stateReason || snapshot?.reason] || 'Guter Flug! Mit einer Revanche startet ihr beide wieder mit 100 Lebenspunkten.' };
+  return { title, text: reasons[stateReason || snapshot?.reason] || 'Guter Flug! Mit einer Revanche startet ihr alle wieder mit 100 Lebenspunkten.' };
 }
 function render() {
+  const isOut = spectating(), inFlight = ['countdown', 'playing', 'reconnecting'].includes(phase);
   show('duel-entry', phase === 'entry'); show('duel-lobby', phase === 'lobby');
   show('duel-result', phase === 'finished' || phase === 'expired');
-  show('duel-hud', ['countdown', 'playing', 'reconnecting'].includes(phase));
-  show('duel-help', ['countdown', 'playing', 'reconnecting'].includes(phase));
+  show('duel-hud', inFlight); show('duel-help', inFlight && !isOut);
+  show('duel-spectator', inFlight && isOut);
   show('duel-countdown', phase === 'countdown');
-  show('duel-touch', phase === 'playing' && connected()); show('duel-reticle', phase === 'playing' && connected());
+  show('duel-feedback', phase === 'playing');
+  if (phase !== 'playing') { clearTimeout(feedbackTimer); $('duel-feedback').textContent = ''; }
+  show('duel-touch', phase === 'playing' && connected() && !isOut); show('duel-reticle', phase === 'playing' && connected() && !isOut);
   show('leave-duel', Boolean(room && token)); show('back-solo', !token);
   document.body.classList.toggle('playing', phase === 'playing');
+  document.body.classList.toggle('spectating', isOut && inFlight);
+  if (isOut && !wasSpectating) { clearInput(); feedback('Du schaust jetzt zu. Die Runde läuft weiter.'); }
+  wasSpectating = isOut;
   $('create-duel').disabled = $('join-duel').disabled = busy;
   $('create-duel').textContent = busy ? 'Wird eröffnet …' : 'Duell eröffnen ↗';
   $('join-duel').textContent = busy ? 'Du kommst gleich dazu …' : 'Duell beitreten ↗';
@@ -113,17 +146,27 @@ function render() {
   show('entry-new-duel', Boolean(room));
   $('entry-eyebrow').textContent = room ? 'DU BIST EINGELADEN' : 'DEIN PRIVATES DUELL';
   $('entry-form-title').textContent = room ? 'Steig mit ein.' : 'Bereit für Gegenwind?';
-  $('entry-note').textContent = room ? 'Wähle deinen Namen. Sobald ihr beide bereit seid, startet euer Duell.' : 'Ohne Konto. Den Einladungslink bekommt nur, wer mitfliegen soll.';
+  $('entry-note').textContent = room ? 'Wähle deinen Namen. Wenn alle bereit sind, startet der Gastgeber eure Runde.' : 'Ohne Konto. Teile den Link mit bis zu vier Freunden.';
   if (room) $('invite-link').value = inviteAddress(location.origin, room);
-  for (const id of ['p1', 'p2']) {
-    const player = players.find(candidate => candidate.id === id), card = $(`lobby-${id}`);
-    card.querySelector('.pilot-name').textContent = player?.name ? player.name + (id === slot ? ' · DU' : '') : 'Noch frei';
-    card.querySelector('.pilot-state').textContent = !player?.name ? 'Einladung teilen' : !player.connected ? 'Verbindung fehlt' : player.ready ? 'Bereit zum Start' : 'Noch nicht bereit';
+  for (const [id, card] of lobbyCards) {
+    const player = players.find(candidate => candidate.id === id && !candidate.left);
+    card.querySelector('.pilot-name').textContent = player?.name ? player.name + (id === slot ? ' · DU' : '') : 'Freier Platz';
+    card.querySelector('.pilot-state').textContent = !player?.name ? 'Freunde einladen' : !player.connected ? 'Verbindung fehlt' : player.ready ? 'Bereit' : 'Noch nicht bereit';
+    card.querySelector('.host-badge').hidden = !player || id !== hostId;
+    card.classList.toggle('is-empty', !player);
     card.classList.toggle('is-ready', Boolean(player?.ready && player?.connected));
   }
+  const participants = players.filter(player => !player.left), host = players.find(player => player.id === hostId), isHost = slot === hostId;
+  $('lobby-count').textContent = `${participants.length} / 5 Piloten`;
+  $('lobby-copy').textContent = isHost ? 'Lade bis zu vier Freunde ein. Wenn alle bereit sind, bestimmst du als Gastgeber, wann es losgeht.' : `${host?.name || 'Der Gastgeber'} startet die Runde, wenn mindestens zwei Piloten dabei und alle bereit sind.`;
   const ready = Boolean(myPlayer()?.ready);
   $('ready-button').textContent = ready ? 'Doch noch warten' : 'Ich bin bereit ↗';
   $('ready-button').setAttribute('aria-pressed', String(ready)); $('ready-button').disabled = !connected() || phase !== 'lobby';
+  $('ready-button').className = isHost ? 'secondary wide' : 'primary';
+  show('start-duel', isHost);
+  $('start-duel').textContent = participants.length < 2 ? 'Auf Mitspieler warten' : `Mit ${participants.length} Piloten starten ↗`;
+  $('start-duel').disabled = !connected() || phase !== 'lobby' || !canHostStart(players, hostId, slot);
+  $('start-status').textContent = isHost ? participants.length < 2 ? 'Zum Start fehlt noch mindestens ein Mitspieler.' : canHostStart(players, hostId, slot) ? 'Alle sind bereit. Du kannst starten oder auf weitere Freunde warten.' : 'Alle angemeldeten Piloten müssen verbunden und bereit sein.' : ready ? 'Du bist bereit. Der Gastgeber startet eure Runde.' : 'Markiere dich als bereit, sobald du losfliegen kannst.';
   $('countdown-value').textContent = Math.max(1, Math.ceil(countdown));
   renderHealth(); statusText();
   const reconnecting = phase === 'reconnecting' || (!connected() && Boolean(token) && !['expired', 'entry'].includes(phase));
@@ -133,13 +176,17 @@ function render() {
   if (phase === 'finished' || phase === 'expired') {
     const copy = resultCopy(); $('duel-result-title').textContent = copy.title; $('duel-result-copy').textContent = copy.text;
     show('rematch-button', phase !== 'expired'); show('rematch-status', phase !== 'expired');
-    $('rematch-button').disabled = rematchPending || !connected();
+    const rematchPeers = players.filter(player => player.connected && !player.left), agreed = rematchPeers.filter(player => player.rematch || (player.id === slot && rematchPending)).length;
+    $('rematch-button').disabled = rematchPending || !connected() || rematchPeers.length < 2 || Boolean(myPlayer()?.left);
     $('rematch-button').textContent = rematchPending ? 'Du bist für die Revanche bereit' : 'Revanche ↗';
-    $('rematch-status').textContent = rematchPending ? 'Jetzt fehlt noch die Zustimmung deines Gegenübers.' : 'Für eine Revanche müssen beide zustimmen.';
+    $('rematch-status').textContent = rematchPeers.length < 2 ? 'Für eine Revanche müssen mindestens zwei Piloten verbunden sein.' : `${agreed} / ${rematchPeers.length} für die Revanche bereit. Danach geht es zurück in die Lobby; der Gastgeber startet die neue Runde.`;
     $('result-score').replaceChildren();
     for (const plane of snapshot?.players || []) {
-      const label = document.createElement('span'), hp = document.createElement('strong');
-      hp.textContent = Math.max(0, Math.round(plane.hp)); label.append(hp, document.createTextNode(players.find(player => player.id === plane.id)?.name || 'Pilot'));
+      const identity = players.find(player => player.id === plane.id), label = element('div', 'result-pilot'), hp = element('strong');
+      label.dataset.playerId = plane.id; label.style.setProperty('--player-color', DUEL_PLAYER_COLORS[plane.id]);
+      hp.textContent = Math.max(0, Math.round(plane.hp));
+      label.append(element('i', 'player-dot'), element('span', 'result-name', (identity?.name || 'Pilot') + (plane.id === slot ? ' · DU' : '')), hp,
+        element('small', 'result-place', plane.id === (stateWinner ?? snapshot?.winner) ? 'Gewonnen' : identity?.left ? 'Verlassen' : isPilotOut(plane, identity) ? 'Ausgeschieden' : 'Im Ziel'));
       $('result-score').append(label);
     }
   }
@@ -169,7 +216,7 @@ async function enterRoom(resume = null) {
   try {
     const result = await api(room ? `/api/duels/${room}/join` : '/api/duels', { name, ...(resume ? { token: resume.token } : {}) });
     if (requestId !== operation) return;
-    if (!inviteRoom(`#room=${result.room}`) || typeof result.token !== 'string' || !['p1', 'p2'].includes(result.slot)) throw new Error('Die Einladung konnte nicht geöffnet werden. Bitte versuche es erneut.');
+    if (!inviteRoom(`#room=${result.room}`) || typeof result.token !== 'string' || !DUEL_PLAYER_IDS.includes(result.slot)) throw new Error('Die Einladung konnte nicht geöffnet werden. Bitte versuche es erneut.');
     room = result.room; token = result.token; slot = result.slot; seq = Number.isSafeInteger(resume?.seq) ? resume.seq : 0;
     history.replaceState(null, '', `/duel#room=${room}`);
     saveSession(); phase = 'lobby'; stopped = false; reconnectUntil = 0; reconnectAttempt = 0; players = [];
@@ -201,7 +248,7 @@ function shotFeedback(next) {
       } else {
         $('duel-reticle').classList.add('hit'); clearTimeout(hitTimer);
         hitTimer = setTimeout(() => $('duel-reticle').classList.remove('hit'), 180);
-        feedback(`Gegenüber: −${Math.round(before - player.hp)} Lebenspunkte`);
+        feedback(`${players.find(identity => identity.id === player.id)?.name || 'Pilot'}: −${Math.round(before - player.hp)} Lebenspunkte`);
       }
     }
     lastHealth.set(player.id, player.hp);
@@ -224,16 +271,18 @@ function connectSocket() {
     lastMessageAt = Date.now();
     try {
       const data = JSON.parse(event.data);
-      if (data.type === 'welcome' && ['p1', 'p2'].includes(data.slot)) { slot = data.slot; saveSession(); }
+      if (data.type === 'welcome' && DUEL_PLAYER_IDS.includes(data.slot)) { slot = data.slot; saveSession(); }
       if (data.type === 'pong') { ping = Math.min(9999, Math.max(0, Date.now() - Number(data.sentAt))); statusText(); }
       if (data.type === 'error') showError(typeof data.message === 'string' ? data.message : 'Das hat gerade nicht geklappt.');
       if (data.type !== 'state') return;
       if (!['lobby', 'countdown', 'playing', 'finished', 'reconnecting', 'expired'].includes(data.phase)) return;
-      lastStateAt = Date.now(); phase = data.phase; players = Array.isArray(data.players) ? data.players : [];
+      lastStateAt = Date.now(); phase = data.phase; players = Array.isArray(data.players) ? data.players : []; hostId = data.hostId || null;
       countdown = Number(data.countdown) || 3; remaining = Number.isFinite(data.remaining) ? data.remaining : 180;
       stateWinner = data.winner ?? data.snapshot?.winner ?? null; stateReason = data.reason || data.snapshot?.reason || '';
       if (phase === 'lobby' || phase === 'countdown') { rematchPending = false; lastHealth.clear(); projectileIds.clear(); }
+      if (phase === 'finished') rematchPending = Boolean(myPlayer()?.rematch);
       if (data.snapshot) { shotFeedback(data.snapshot); snapshot = data.snapshot; }
+      else if (phase === 'lobby' || phase === 'countdown') snapshot = null;
       if (phase === 'expired') { stopped = true; current.close(1000, 'expired'); }
       render();
     } catch { showError('Ein Spielstand konnte nicht gelesen werden. Die Verbindung wird weiter geprüft.'); }
@@ -262,7 +311,7 @@ function leaveRoom({ notify = true, forget = true } = {}) {
   operation++; busy = false; stopped = true; clearTimeout(reconnectTimer);
   clearInput(); if (notify) send({ type: 'leave' }); if (forget) forgetSession();
   if (socket) { const old = socket; socket = null; old.close(1000, 'leave'); }
-  token = slot = null; players = []; snapshot = null; phase = 'entry'; ping = null;
+  token = slot = hostId = null; players = []; snapshot = null; phase = 'entry'; ping = null; wasSpectating = false;
   stateWinner = null; stateReason = ''; lastHealth.clear(); projectileIds.clear(); rematchPending = false;
 }
 function newRoom() {
@@ -279,13 +328,14 @@ async function startFromLocation() {
 
 $('duel-name-form').addEventListener('submit', event => { event.preventDefault(); void enterRoom(); });
 $('ready-button').onclick = () => { showError(); send({ type: 'ready', ready: !myPlayer()?.ready }); };
+$('start-duel').onclick = () => { if (canHostStart(players, hostId, slot)) { showError(); send({ type: 'start' }); } };
 $('rematch-button').onclick = () => { if (send({ type: 'rematch' })) { rematchPending = true; render(); } };
 $('leave-duel').onclick = newRoom; $('new-duel').onclick = newRoom;
 $('entry-new-duel').onclick = newRoom;
 for (const id of ['solo-link', 'back-solo', 'result-solo']) $(id).addEventListener('click', () => leaveRoom());
 $('copy-invite').onclick = async () => {
   const input = $('invite-link');
-  try { await navigator.clipboard.writeText(input.value); $('invite-status').textContent = 'Einladung kopiert. Schick sie deinem Mitspieler.'; }
+  try { await navigator.clipboard.writeText(input.value); $('invite-status').textContent = 'Einladung kopiert. Schick sie bis zu vier Freunden.'; }
   catch { input.focus(); input.select(); input.setSelectionRange(0, input.value.length); $('invite-status').textContent = 'Der Link ist markiert. Kopiere ihn über das Menü deines Browsers.'; }
 };
 show('share-invite', typeof navigator.share === 'function');
@@ -294,7 +344,7 @@ $('share-invite').onclick = async () => {
   catch (error) { if (error.name !== 'AbortError') { $('invite-link').focus(); $('invite-link').select(); $('invite-status').textContent = 'Teilen ist gerade nicht möglich. Kopiere den markierten Link.'; } }
 };
 document.addEventListener('keydown', event => {
-  if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey || event.isComposing || phase !== 'playing' || !connected()) return;
+  if (event.defaultPrevented || event.ctrlKey || event.altKey || event.metaKey || event.isComposing || phase !== 'playing' || spectating() || !connected()) return;
   if (event.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),a,button:not(#fire-button)')) return;
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(event.code)) {
     event.preventDefault(); keys.add(event.code); $('fire-button').classList.toggle('active', currentInput().fire);
@@ -312,7 +362,7 @@ function moveStick(event) {
   $('duel-stick-knob').style.transform = `translate(${touch.steer * radius}px, ${-touch.pitch * radius}px)`;
 }
 $('duel-stick').addEventListener('pointerdown', event => {
-  if (phase !== 'playing' || stickPointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  if (phase !== 'playing' || spectating() || stickPointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
   event.preventDefault(); stickPointer = event.pointerId; $('duel-stick').setPointerCapture(stickPointer); moveStick(event);
 });
 $('duel-stick').addEventListener('pointermove', moveStick);
@@ -320,11 +370,11 @@ for (const kind of ['pointerup', 'pointercancel', 'lostpointercapture']) $('duel
   if (event.pointerId !== stickPointer) return; stickPointer = null; touch.steer = touch.pitch = 0; $('duel-stick-knob').style.transform = '';
 });
 $('fire-button').addEventListener('pointerdown', event => {
-  if (phase !== 'playing' || firePointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
+  if (phase !== 'playing' || spectating() || firePointer !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
   event.preventDefault(); firePointer = event.pointerId; $('fire-button').setPointerCapture(firePointer); touch.fire = true; $('fire-button').classList.add('active');
 });
 $('fire-button').addEventListener('click', event => {
-  if (event.detail !== 0 || phase !== 'playing') return;
+  if (event.detail !== 0 || phase !== 'playing' || spectating()) return;
   // Keyboard Enter and assistive activation fire a short pulse; pointer/Space hold is handled separately.
   touch.fire = true; $('fire-button').classList.add('active'); clearTimeout(fireReleaseTimer);
   fireReleaseTimer = setTimeout(() => { if (firePointer === null) touch.fire = false; $('fire-button').classList.toggle('active', currentInput().fire); }, 120);
@@ -348,7 +398,7 @@ setInterval(() => {
 let lastFrame = performance.now();
 function frame(now) {
   const dt = Math.min(.1, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
-  const active = phase === 'playing' && connected() && !document.hidden && Date.now() - lastStateAt < 1500;
+  const active = phase === 'playing' && !spectating() && connected() && !document.hidden && Date.now() - lastStateAt < 1500;
   if (phase === 'playing' && connected()) {
     const stale = Date.now() - lastStateAt >= 1500;
     show('duel-network', stale);

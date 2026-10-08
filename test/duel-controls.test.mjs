@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { duelInput, inviteAddress, inviteRoom, pilotName, remainingTime } from '../src/duel-controls.js';
+import { canHostStart, duelInput, duelResultTitle, inviteAddress, inviteRoom, isPilotOut, pilotName, remainingTime } from '../src/duel-controls.js';
 
 const room = '12345678-1234-4123-8123-123456789abc';
 
@@ -34,4 +34,35 @@ test('remaining time stays readable at round start, final seconds and invalid va
   assert.equal(remainingTime(.1), '0:01');
   assert.equal(remainingTime(-5), '0:00');
   assert.equal(remainingTime(Infinity), '0:00');
+});
+
+test('only the current host starts two to five connected ready pilots, including sparse seats', () => {
+  const players = ['p2', 'p4', 'p5'].map(id => ({ id, name: id, connected: true, ready: true }));
+  assert.equal(canHostStart(players, 'p4', 'p4'), true);
+  assert.equal(canHostStart(players, 'p4', 'p2'), false);
+  assert.equal(canHostStart(players, 'p1', 'p1'), false);
+  assert.equal(canHostStart(players.slice(0, 1), 'p2', 'p2'), false);
+  assert.equal(canHostStart(players.map(player => ({ ...player, ready: player.id !== 'p5' })), 'p4', 'p4'), false);
+  assert.equal(canHostStart(players.map(player => ({ ...player, connected: player.id !== 'p5' })), 'p4', 'p4'), false);
+  assert.equal(canHostStart([...players, { id: 'p1', left: true, ready: false, connected: false }], 'p4', 'p4'), true);
+  const five = ['p1', 'p2', 'p3', 'p4', 'p5'].map(id => ({ id, ready: true, connected: true }));
+  assert.equal(canHostStart(five, 'p5', 'p5'), true);
+  assert.equal(canHostStart([...five, { id: 'p6', ready: true, connected: true }], 'p5', 'p5'), false);
+});
+
+test('zero health and server elimination enter spectator mode, a temporary disconnect does not', () => {
+  assert.equal(isPilotOut({ hp: 0 }, { connected: true }), true);
+  assert.equal(isPilotOut({ hp: 40, eliminated: true }, {}), true);
+  assert.equal(isPilotOut(null, { eliminated: true }), true);
+  assert.equal(isPilotOut({ hp: 80 }, { left: true }), true);
+  assert.equal(isPilotOut({ hp: 1 }, { connected: false }), false);
+  assert.equal(isPilotOut(null, null), false);
+});
+
+test('result titles name any winning slot rather than selecting the first opponent', () => {
+  const players = [{ id: 'p1', name: 'Erster' }, { id: 'p3', name: 'Dritter' }, { id: 'p5', name: 'Fünfter' }];
+  assert.equal(duelResultTitle('p5', players, 'p1'), 'Fünfter gewinnt.');
+  assert.equal(duelResultTitle('p3', players, 'p3'), 'Du hast gewonnen!');
+  assert.equal(duelResultTitle('draw', players, 'p1'), 'Unentschieden.');
+  assert.equal(duelResultTitle('missing', players, 'p1'), 'Die Runde ist beendet.');
 });

@@ -34,3 +34,21 @@ export function remainingTime(seconds) {
   const value = Number.isFinite(seconds) ? Math.max(0, Math.ceil(seconds)) : 0;
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
 }
+
+export function canHostStart(players, hostId, slot) {
+  const participants = players.filter(player => !player.left);
+  return Boolean(slot && slot === hostId && participants.length >= 2 && participants.length <= 5
+    && participants.some(player => player.id === slot)
+    && participants.every(player => player.connected && player.ready));
+}
+
+export function isPilotOut(plane, identity) {
+  return Boolean(identity?.left || identity?.eliminated || plane?.eliminated || (Number.isFinite(plane?.hp) && plane.hp <= 0));
+}
+
+export function duelResultTitle(winner, players, slot) {
+  if (winner === 'draw' || !winner) return 'Unentschieden.';
+  if (winner === slot) return 'Du hast gewonnen!';
+  const player = players.find(player => player.id === winner);
+  return player ? `${player.name} gewinnt.` : 'Die Runde ist beendet.';
+}

@@ -1,15 +1,18 @@
-// Two real, isolated browser players against the local server.
+// Two to five real, isolated browser players against the local server.
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const { chromium } = require('playwright');
 const origin = process.env.DUEL_QA_ORIGIN || 'http://127.0.0.1:8796';
 assert(['localhost', '127.0.0.1'].includes(new URL(origin).hostname));
-const output = 'D:/test/tmp/stubenflieger-duel';
+const count = Number(process.env.DUEL_QA_PLAYERS || 5);
+assert([2, 3, 5].includes(count));
+const output = `D:/test/tmp/stubenflieger-five/browser-${count}`;
 (async () => {
   await fs.mkdir(output, { recursive: true });
   const browser = await chromium.launch({ channel: 'msedge', headless: true, args: ['--enable-unsafe-swiftshader'] });
   const errors = [], checks = [];
   let host, guest;
+  const additional = [];
   try {
     async function player() {
       const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce', permissions: ['clipboard-read', 'clipboard-write'] });
@@ -47,19 +50,29 @@ const output = 'D:/test/tmp/stubenflieger-duel';
     await host.waitForFunction(() => /kopiert|markiert/i.test(document.querySelector('#invite-status').textContent));
     assert.match(await host.locator('#invite-status').textContent(), /kopiert|markiert/i);
     await guest.goto(invitation); await guest.locator('#duel-name').fill('Gartenpilot'); await guest.locator('#join-duel').click();
-    await Promise.all([host, guest].map(page => page.waitForFunction(() => window.duelQA.state?.players.filter(p => p.connected).length === 2)));
+    for (let i = 3; i <= count; i++) {
+      const extra = await player(); additional.push(extra);
+      await extra.goto(invitation); await extra.locator('#duel-name').fill(`Gartenpilot ${i}`); await extra.locator('#join-duel').click();
+    }
+    const pilots = [host, guest, ...additional];
+    await Promise.all(pilots.map(page => page.waitForFunction(n => window.duelQA.state?.players.filter(p => p.connected).length === n, count)));
     await host.screenshot({ path: `${output}/desktop-lobby.png` });
-    const profileClean = await Promise.all([host, guest].map(page => page.evaluate(() => !Object.keys(localStorage).some(key => key.includes('profile')))));
+    const profileClean = await Promise.all(pilots.map(page => page.evaluate(() => !Object.keys(localStorage).some(key => key.includes('profile')))));
     assert(profileClean.every(Boolean));
-    checks.push('Create, share and join a private duel in separate browsers without changing the solo profile');
+    checks.push(`Create, share and join with ${count} separate browsers without changing the solo profile`);
     await host.reload();
-    await host.waitForFunction(() => window.duelQA.state?.players.filter(p => p.connected).length === 2);
+    await host.waitForFunction(n => window.duelQA.state?.players.filter(p => p.connected).length === n, count);
     assert.match(await host.locator('#lobby-p1').textContent(), /Papierpilot.*DU/s);
     checks.push('Reload restores the authenticated host to the same seat');
-    await host.locator('#ready-button').click(); await guest.locator('#ready-button').click();
-    await Promise.all([host, guest].map(page => page.waitForFunction(() => window.duelQA.state?.phase === 'playing', null, { timeout: 15000 })));
+    for (const page of pilots) await page.locator('#ready-button').click();
+    await host.waitForFunction(() => !document.querySelector('#start-duel').disabled);
+    assert.equal(await host.evaluate(() => window.duelQA.state.phase), 'lobby');
+    assert.equal(await guest.locator('#start-duel').isVisible(), false);
+    await host.locator('#start-duel').click();
+    await Promise.all(pilots.map(page => page.waitForFunction(() => window.duelQA.state?.phase === 'playing', null, { timeout: 15000 })));
     assert.equal(await host.locator('#own-hp').textContent(), '100');
     assert.equal(await guest.locator('#own-hp').textContent(), '100');
+    assert.equal(await host.locator('#opponents .health-meter:visible').count(), count - 1);
     await host.locator('#duel-canvas').focus(); await host.keyboard.down('d'); await host.keyboard.down('Space');
     await host.waitForFunction(() => window.duelQA.sends.some(d => d.type === 'input' && d.fire && d.steer === 1));
     await host.waitForFunction(() => window.duelQA.state.snapshot.projectiles.some(s => s.owner === 'p1'));
@@ -76,7 +89,9 @@ const output = 'D:/test/tmp/stubenflieger-duel';
     await guest.mouse.up();
     assert(await guest.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await guest.screenshot({ path: `${output}/mobile-flight.png` });
-    checks.push('Ready/countdown, both HP bars, keyboard firing and steering, touch firing and joystick');
+    checks.push(`Host start/countdown, all ${count} HP bars, keyboard firing and steering, touch firing and joystick`);
+    for (const page of additional) await page.locator('#leave-duel').click();
+    if (additional.length) { await host.waitForFunction(() => window.duelQA.state.snapshot.players.filter(p => p.hp > 0).length === 2); assert.equal(await host.evaluate(() => window.duelQA.state.phase), 'playing'); }
     await guest.locator('#leave-duel').click();
     await host.waitForFunction(() => window.duelQA.state?.phase === 'finished' && window.duelQA.state.winner === 'p1');
     assert.match(await host.locator('#duel-result-title').textContent(), /gewonnen/);

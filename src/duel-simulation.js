@@ -2,9 +2,9 @@ import { Quaternion, Vec3 } from 'cannon-es';
 import { createPhysics } from './physics.js';
 import { getAircraftDefinition } from './aircraft.js';
 import { getDoorPose } from './house.js';
-import { DUEL_HOUSE, DUEL_OPEN_DOORS, DUEL_RULES, DUEL_SPAWNS } from './duel-arena.js';
+import { DUEL_HOUSE, DUEL_OPEN_DOORS, DUEL_RULES, DUEL_SPAWNS, DUEL_PLAYER_IDS } from './duel-arena.js';
 import { integrateDuelFlight, sanitizeDuelInput, duelQuaternion } from './duel-flight.js';
-export { DUEL_HOUSE, DUEL_OPEN_DOORS, DUEL_RULES, DUEL_SPAWNS } from './duel-arena.js';
+export { DUEL_HOUSE, DUEL_OPEN_DOORS, DUEL_RULES, DUEL_SPAWNS, DUEL_PLAYER_IDS, DUEL_PLAYER_COLORS } from './duel-arena.js';
 export { predictDuelPlayer } from './duel-flight.js';
 
 const EPS = 1e-9;
@@ -120,31 +120,42 @@ function compileWall(part) {
     max: new Vec3(...['x','y','z'].map(axis => Math.max(...corners.map(p => p[axis])))) };
 }
 
-export function createDuelSimulation({ house = DUEL_HOUSE, spawns = DUEL_SPAWNS } = {}) {
-  if (!Array.isArray(spawns) || spawns.length !== 2) throw new TypeError('A duel needs two spawns');
+export function createDuelSimulation({ house = DUEL_HOUSE, playerIds = ['p1', 'p2'], spawns } = {}) {
+  if (!Array.isArray(playerIds) || playerIds.length < DUEL_RULES.minPlayers || playerIds.length > DUEL_RULES.maxPlayers
+      || new Set(playerIds).size !== playerIds.length || playerIds.some(id => !DUEL_PLAYER_IDS.includes(id))) throw new TypeError('A round needs two to five distinct player IDs');
+  spawns ??= playerIds.map(id => DUEL_SPAWNS.find(spawn => spawn.id === id));
+  if (!Array.isArray(spawns) || spawns.length !== playerIds.length) throw new TypeError('Every player needs one spawn');
+  if (spawns.some(spawn => !spawn || ![spawn.x, spawn.y, spawn.z, spawn.heading].every(Number.isFinite))) throw new TypeError('Invalid duel spawn');
   const doorOpen = door => door.duelOpen ?? DUEL_OPEN_DOORS.includes(door.id);
   const walls = [...house.obstacles, ...house.doors.map(door => getDoorPose(door, doorOpen(door)))].map(compileWall);
-  const players = spawns.map((spawn, index) => {
-    if (![spawn.x, spawn.y, spawn.z, spawn.heading].every(Number.isFinite)) throw new TypeError('Invalid duel spawn');
-    const physics = createPhysics({ ...house, start: spawn }, { form: 'classic', size: 1 });
-    return { id: index === 0 ? 'p1' : 'p2', spawn: { ...spawn }, physics };
-  });
+  // Flight uses prescribed convex sweeps, not world.step or plane-plane forces.
+  // One static house can therefore serve every player's independent pose. This
+  // avoids retaining five copies of the house inside a 128 MB Worker isolate.
+  const physics = createPhysics({ ...house, start: spawns[0] }, { form: 'classic', size: 1 });
+  const players = spawns.map((spawn, index) => ({ id: playerIds[index], spawn: { ...spawn }, body: { position: new Vec3(), quaternion: new Quaternion() } }));
   let tick, time, accumulator, winner, reason, projectiles, serial;
 
-  function pose(player) { return { position: plain(player.physics.plane.position), quaternion: plainQ(player.physics.plane.quaternion) }; }
+  function pose(player) { return { position: plain(player.body.position), quaternion: plainQ(player.body.quaternion) }; }
+  function advancePlayer(player, dt, velocity, orientation = player.body.quaternion) {
+    physics.plane.position.copy(player.body.position); physics.plane.quaternion.copy(player.body.quaternion);
+    const contact = physics.advance(dt, velocity, orientation);
+    player.body.position.copy(physics.plane.position); player.body.quaternion.copy(physics.plane.quaternion);
+    return contact;
+  }
   function putAtSpawn(player) {
-    player.physics.plane.position.set(player.spawn.x, player.spawn.y, player.spawn.z);
+    player.body.position.set(player.spawn.x, player.spawn.y, player.spawn.z);
     player.heading = player.spawn.heading; player.verticalSpeed = 0; player.input = { steer: 0, pitch: 0 };
-    player.physics.plane.quaternion.copy(duelQuaternion(0, player.heading));
+    player.body.quaternion.copy(duelQuaternion(0, player.heading));
   }
   function reset() {
     tick = time = accumulator = serial = 0; winner = null; reason = ''; projectiles = [];
+    physics.reset();
+    for (const door of house.doors) physics.setDoorOpen(door.id, doorOpen(door));
     for (const player of players) {
-      player.physics.reset();
-      for (const door of house.doors) player.physics.setDoorOpen(door.id, doorOpen(door));
       putAtSpawn(player); player.hp = DUEL_RULES.hp; player.nextShot = 0;
+      player.eliminationReason = '';
       player.wallImmuneUntil = -1; player.recoveryUntil = -1; player.recoveryVelocity = new Vec3();
-      if (player.physics.advance(0, new Vec3()).collided) throw new Error(`Blocked duel spawn: ${player.id}`);
+      if (outside(player.body.position, definition.boundingRadius) || advancePlayer(player, 0, new Vec3()).collided) throw new Error(`Blocked duel spawn: ${player.id}`);
     }
     return snapshot();
   }
@@ -168,7 +179,7 @@ export function createDuelSimulation({ house = DUEL_HOUSE, spawns = DUEL_SPAWNS 
       player.wallImmuneUntil = time + DUEL_RULES.wallCooldown;
     }
     player.recoveryUntil = time + DUEL_RULES.recoverySeconds;
-    player.recoveryQuaternion = player.physics.plane.quaternion.clone();
+    player.recoveryQuaternion = player.body.quaternion.clone();
     player.recoveryVelocity = velocity.scale(-.9);
     if (player.recoveryVelocity.lengthSquared() < .05) player.recoveryVelocity = normal?.lengthSquared() > EPS ? normal.scale(1.2) : new Vec3(0, .6, 0);
     player.heading = Math.atan2(-Math.sin(player.heading), -Math.cos(player.heading));
@@ -185,10 +196,10 @@ export function createDuelSimulation({ house = DUEL_HOUSE, spawns = DUEL_SPAWNS 
       player.heading = movement.heading; player.input = movement.input; player.verticalSpeed = movement.verticalSpeed;
       velocity = vec(movement.velocity); orientation = movement.quaternion;
     }
-    const contact = player.physics.advance(dt, velocity, orientation);
-    const leftArena = outside(player.physics.plane.position, definition.boundingRadius);
+    const contact = advancePlayer(player, dt, velocity, orientation);
+    const leftArena = outside(player.body.position, definition.boundingRadius);
     if (leftArena) {
-      player.physics.plane.position.copy(vec(before.position)); player.physics.plane.quaternion.copy(before.quaternion);
+      player.body.position.copy(vec(before.position)); player.body.quaternion.copy(before.quaternion);
     }
     if (contact.collided || leftArena) {
       if (time < player.recoveryUntil) {
@@ -203,23 +214,29 @@ export function createDuelSimulation({ house = DUEL_HOUSE, spawns = DUEL_SPAWNS 
     // across the whole house between the trapped corner and the spawn.
     return { before: relocated ? after : before, after };
   }
-  function finishIfNeeded() {
-    if (players.some(player => player.hp <= 0)) {
-      winner = players.every(player => player.hp <= 0) ? 'draw' : players.find(player => player.hp > 0).id;
-      reason = 'knockout'; return;
+  function finishIfNeeded(finishReason = 'knockout') {
+    const alive = players.filter(player => player.hp > 0);
+    if (alive.length <= 1) {
+      winner = alive.length ? alive[0].id : 'draw'; reason = finishReason; return;
     }
     if (time + EPS >= DUEL_RULES.roundSeconds) {
-      winner = players[0].hp === players[1].hp ? 'draw' : players[0].hp > players[1].hp ? 'p1' : 'p2'; reason = 'timeout';
+      const highest = Math.max(...alive.map(player => player.hp)), leaders = alive.filter(player => player.hp === highest);
+      winner = leaders.length === 1 ? leaders[0].id : 'draw'; reason = 'timeout';
     }
   }
   function fixedStep(inputs) {
     const dt = DUEL_RULES.stepSeconds;
-    const motion = players.map(player => move(player, sanitizeDuelInput(inputs?.[player.id]), dt));
-    const damage = [0, 0], surviving = [];
+    const motion = players.map(player => player.hp > 0 ? move(player, sanitizeDuelInput(inputs?.[player.id]), dt) : null);
+    const damage = players.map(() => 0), surviving = [];
     for (const shot of projectiles) {
-      const targetIndex = shot.owner === 'p1' ? 1 : 0, next = shot.position.vadd(shot.velocity.scale(dt));
-      const wall = wallHit(shot.position, next), opponent = sweepDuelProjectile(shot.position, next, motion[targetIndex].before, motion[targetIndex].after);
-      if (opponent !== null && (wall === null || opponent < wall - EPS)) { damage[targetIndex] += DUEL_RULES.shotDamage; continue; }
+      const next = shot.position.vadd(shot.velocity.scale(dt)), wall = wallHit(shot.position, next);
+      let targetIndex = -1, nearest = wall ?? Infinity;
+      for (const [index, player] of players.entries()) {
+        if (player.id === shot.owner || player.hp <= 0) continue;
+        const hit = sweepDuelProjectile(shot.position, next, motion[index].before, motion[index].after);
+        if (hit !== null && hit < nearest - EPS) { nearest = hit; targetIndex = index; }
+      }
+      if (targetIndex >= 0) { damage[targetIndex] += DUEL_RULES.shotDamage; continue; }
       if (wall !== null) continue;
       shot.position = next; shot.age += dt;
       if (shot.age + EPS < DUEL_RULES.lifetime && !outside(next)) surviving.push(shot);
@@ -229,10 +246,10 @@ export function createDuelSimulation({ house = DUEL_HOUSE, spawns = DUEL_SPAWNS 
     tick++; time = tick * dt; finishIfNeeded();
     if (winner) return;
     for (const player of players) {
-      if (!sanitizeDuelInput(inputs?.[player.id]).fire || time + EPS < player.nextShot) continue;
+      if (player.hp <= 0 || !sanitizeDuelInput(inputs?.[player.id]).fire || time + EPS < player.nextShot) continue;
       player.nextShot = time + DUEL_RULES.shotCooldown;
-      const direction = player.physics.plane.quaternion.vmult(new Vec3(0, 0, -1)); direction.normalize();
-      const centre = player.physics.plane.position, muzzle = centre.vadd(direction.scale(definition.length / 2 + .07));
+      const direction = player.body.quaternion.vmult(new Vec3(0, 0, -1)); direction.normalize();
+      const centre = player.body.position, muzzle = centre.vadd(direction.scale(definition.length / 2 + .07));
       // Muzzles near walls must not create a shot on the other side of the wall.
       if (wallHit(centre, muzzle) !== null) continue;
       projectiles.push({ id: `s${++serial}`, owner: player.id, position: muzzle, velocity: direction.scale(DUEL_RULES.shotSpeed), age: 0 });
@@ -250,9 +267,21 @@ export function createDuelSimulation({ house = DUEL_HOUSE, spawns = DUEL_SPAWNS 
   }
   function snapshot() {
     return { tick, time, players: players.map(player => ({ id: player.id, ...pose(player), heading: player.heading, hp: player.hp,
-      input: { ...player.input }, verticalSpeed: player.verticalSpeed, recovering: time < player.recoveryUntil })),
+      eliminated: player.hp <= 0, input: { ...player.input }, verticalSpeed: player.verticalSpeed, recovering: player.hp > 0 && time < player.recoveryUntil })),
       projectiles: projectiles.map(shot => ({ id: shot.id, owner: shot.owner, position: plain(shot.position) })), winner, reason };
   }
+  function eliminateMany(ids, eliminationReason = 'disconnect') {
+    if (winner || !Array.isArray(ids)) return snapshot();
+    let changed = false;
+    for (const player of players) if (player.hp > 0 && ids.includes(player.id)) {
+      player.hp = 0; player.input = { steer: 0, pitch: 0 }; player.verticalSpeed = 0;
+      player.recoveryUntil = -1; player.eliminationReason = eliminationReason;
+      changed = true;
+    }
+    if (changed) finishIfNeeded(eliminationReason);
+    return snapshot();
+  }
+  function eliminate(id, eliminationReason = 'disconnect') { return eliminateMany([id], eliminationReason); }
   reset();
-  return { step, snapshot, reset };
+  return { step, snapshot, reset, eliminate, eliminateMany };
 }
