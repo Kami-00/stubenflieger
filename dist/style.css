@@ -49,3 +49,25 @@ input:focus-visible,select:focus-visible,#game:focus-visible,#ranking-table:focu
 .color-grid{grid-template-columns:1fr}.shop-color-preview{width:min(100%,260px);height:150px;align-self:center}.shop-color-controls{display:flex;gap:16px;align-items:center;flex-wrap:wrap}.shop-color-controls input[type=color]{width:90px;height:54px;padding:3px;border:1px solid #a5c9b377;border-radius:9px;background:#263c3a;cursor:pointer}.shop-color-code{font-size:17px;font-variant-numeric:tabular-nums;color:#fff3d9}.shop-color-label{font-size:14px;font-weight:600}.shop-color-current{font-size:12px;color:#cbdce3}
 #camera-mode{font-size:11px;font-weight:700;min-width:48px}#camera-mode[aria-pressed=true]{border-color:#ffca6a;color:#ffca6a}
 @container game (max-width:480px){.brand>span:last-child{display:none}.color-grid{grid-template-columns:1fr}.shop-color-preview{height:115px}}
+
+/* Practice controls share one menu setting and a quick start-panel toggle. */
+.launch-panel .practice-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:10px 12px;margin:12px 0 5px;text-align:left}
+.practice-toggle::after{content:'AUS';font-size:10px;letter-spacing:1px;color:#bed0c3}
+.practice-toggle[aria-pressed=true]{border-color:#ffca6a;background:#ffca6a18;color:#ffda93}
+.practice-toggle[aria-pressed=true]::after{content:'AKTIV';color:#ffda93}
+.launch-panel .practice-start-hint{font-size:11px;line-height:1.45;margin:0 0 12px;color:#bed0c3}
+.practice-menu{margin:18px 0;padding:16px;border:1px solid #91b5a747;border-radius:14px;background:#1e353340}
+.practice-menu h3{margin:0 0 12px;color:#ffda93;font-size:16px}
+.practice-menu label{font-size:13px;font-weight:600}
+#play-mode{display:block;width:100%;min-width:0;min-height:44px;margin:8px 0 0;padding:10px 12px;border:1px solid #91b5a780;border-radius:10px;background:#142c2a;color:#fff6e4;font:inherit;font-size:14px}
+.menu-card .practice-note{font-size:12px;line-height:1.5;margin:8px 0;color:#bed0c3}
+.menu-card .practice-rules{font-size:12px;line-height:1.5;margin:8px 0 0;color:#ffda93}
+#practice-settings{margin-top:14px;padding-top:14px;border-top:1px solid #ffffff20}
+.practice-speed-label{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+#practice-speed-value{color:#ffda93;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+#practice-speed{display:block;width:100%;min-width:0;min-height:44px;margin:4px 0 0;accent-color:#ffca6a;cursor:pointer}
+.practice-badge{position:absolute;left:12px;right:12px;bottom:6px;color:#ffda93;font-size:10px;line-height:1.4;letter-spacing:.2px;font-weight:700;white-space:nowrap}
+.stats:has(.practice-badge:not([hidden])){padding-bottom:47px}
+.stats:has(.practice-badge:not([hidden])) .discovery-hud{bottom:27px}
+@container game (max-width:850px){.stats:has(.practice-badge:not([hidden])) .flight-level{bottom:27px}}
+@container game (max-width:480px){.practice-menu{padding:12px}.practice-speed-label{gap:8px}.practice-menu label{font-size:12px}.practice-badge{letter-spacing:0}}

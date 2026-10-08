@@ -1,5 +1,5 @@
 /** State of one flight. Run stars open doors without spending them. */
-export function createRunState(house, profile, id = globalThis.crypto.randomUUID()) {
+export function createRunState(house, profile, id = globalThis.crypto.randomUUID(), { practice = false } = {}) {
   const stars = new Set(), visited = new Set(), opened = new Set();
   const starIds = new Set(house.collectibles.map(star => star.id));
   const roomAliases = new Map(house.rooms.map(room => [room.id, room.bonusId || room.id]));
@@ -7,14 +7,16 @@ export function createRunState(house, profile, id = globalThis.crypto.randomUUID
   const startRoom = house.startRoomId || house.startRoom || house.rooms[0].id;
   visited.add(startRoom);
   const owned = new Set(profile.owned || []);
-  if (profile.useDoorUnlocks !== false) {
+  if (practice) {
+    for (const door of house.doors) opened.add(door.id);
+  } else if (profile.useDoorUnlocks !== false) {
     for (const door of house.doors) if (owned.has(`door:${door.id}`)) opened.add(door.id);
   }
   const charges = [...new Set(profile.equipped?.boosts || [])]
     .filter(boost => owned.has(`boost:${boost}`)).slice(0, 2);
   const used = new Set();
   return {
-    id, stars, visited, opened, charges, used,
+    id, practice, stars, visited, opened, charges, used,
     collect(id) {
       if (!starIds.has(id) || stars.has(id)) return null;
       stars.add(id);
@@ -34,7 +36,7 @@ export function createRunState(house, profile, id = globalThis.crypto.randomUUID
     },
     nextDoor() { return house.doors.filter(door => !opened.has(door.id)).sort((a, b) => a.threshold - b.threshold)[0] || null; },
     summary(seconds = 0, blocks = 0) {
-      return { stars: stars.size, starIds: [...stars], blocks, seconds, roomIds: [...visited].filter(id => id !== startRoom), complete: stars.size === starIds.size };
+      return { stars: stars.size, starIds: [...stars], blocks, seconds, roomIds: [...visited].filter(id => id !== startRoom), complete: stars.size === starIds.size, ...(practice ? { practice: true } : {}) };
     },
   };
 }

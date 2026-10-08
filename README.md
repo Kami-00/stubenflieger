@@ -14,6 +14,14 @@ Ein 3D-Papierflieger-Spiel mit einem zusammenhängenden Haus: Keller, Erdgeschos
 - Goldene, funkelnde Sterne sind dauerhafte Erstfunde; bereits entdeckte Sterne erscheinen silberblau. Ein Ring kennzeichnet einen Wertbonus, zwei Ringe beide Boni. Der Entdeckungszähler bleibt über Runs hinweg erhalten. Jeder Stern zählt weiterhin genau einmal für Türen und erscheint im nächsten Run wieder.
 - Jeder erstmals betretene Raum bringt 250 Extrapunkte pro Run. Der Startraum zählt nicht, Teilrechtecke desselben Raums und wiederholtes Betreten ebenfalls nicht. Bereits gekaufte Türen bezahlen keinen Bonus beim Neustart.
 
+## Übungsmodus
+
+Auf der Startkarte **Übungsmodus** aktivieren oder im Flugmenü zwischen normalem Run und Üben wechseln. Der Wechsel startet einen neuen Flug; ein vorheriger normaler Run wird zuerst regulär abgerechnet. Das Übungstempo lässt sich im Menü von 25 bis 100 Prozent einstellen, auch während einer pausierten Übung. Standard sind 50 Prozent; Modus und Tempo werden getrennt vom Fortschrittsprofil gespeichert.
+
+Im Übungsmodus sind alle 22 Türen offen. Der Flieger prallt an Wänden, Böden, Decken, Möbeln und der Grundstücksgrenze ab und bleibt unsterblich. In engen Stellen führt die Rückstoßhilfe über eine bereits geprüfte freie Position zurück. Der gesamte Flugablauf läuft mit dem gewählten Tempo langsamer. Ausrüstung und Kameraansicht bleiben auswählbar wie gewohnt.
+
+Sterne und besuchte Räume zählen nur innerhalb dieser Übung. Es gibt keine Punkte, Erstfundmarkierungen, Freischaltungen, persönlichen Rekorde oder öffentlichen Bestenlisteneinträge. Auch nach allen 96 Sternen darf weitergeübt werden. Beenden, Neustart und Neuladen erzeugen keine Gutschrift; eine vorherige normale Flugabrechnung bleibt davon getrennt. Bei einem Speicherfehler wird der Wechsel aus einem noch nicht abgerechneten normalen Run verhindert.
+
 ## Privates Online-Duell
 
 Über **Online spielen · bis zu 5 Piloten** oder `/duel` einen Raum erstellen und den Link mit bis zu vier Freunden teilen. Zwei bis fünf Piloten spielen jeder gegen jeden. Der Link enthält nur die zufällige Raumkennung; die persönlichen Zugangsschlüssel bleiben in der jeweiligen Browsersitzung. Alle bestätigen ihre Bereitschaft, anschließend startet der Gastgeber den Countdown. So kann die Gruppe auf weitere Freunde warten. Nach einer Runde können die verbundenen Teilnehmer eine Revanche wählen und gemeinsam in der Lobby erneut starten.
@@ -85,6 +93,7 @@ FPV folgt Blickrichtung, Steigen/Sinken und Schräglage des Flugzeugs. Die echte
 - `src/camera.js` / `src/view-mode.js`: gemeinsame Außen-/FPV-Kamera und gespeicherte Ansicht.
 - `src/cosmetics.js` / `src/aircraft-appearance.js` / `src/aircraft-effects.js`: geprüfte Farbwerte, Papierfaltung und voneinander unabhängige Flugspuren.
 - `src/run.js` / `src/flight.js`: Run-Fortschritt, Räume, Boostladungen und bidirektionale Aufwindhilfe.
+- `src/practice.js`: Übungstempo und kollisionsgeprüfter Rückstoß einschließlich Grundstücksgrenzen.
 - `src/progression.js` / `src/shop.js`: dauerhaftes Profil und Shop.
 - `src/star-rewards.js`: stabile Sternidentitäten und gemeinsame Wertung für Browser und Server.
 - `src/duel-arena.js` / `src/duel-flight.js` / `src/duel-simulation.js`: feste Duell-Arena, Flugmodell und verbindliche Trefferberechnung.
@@ -114,6 +123,8 @@ Die neue Spielszene verwendet die installierten Three.js- und Cannon-Abhängigke
 `test/camera-effects-browser.cjs` prüft den ausgelieferten Solo-Perspektivwechsel und rendert zusätzlich fünf unabhängige Flugzeuge, das FPV-Zuschauen nach K. o. sowie eine Revanche mit den verbleibenden Spielern. Testzugriffe entstehen ausschließlich im lokalen Test-Bundle; die ausgelieferten Dateien enthalten keine Debugschnittstelle.
 
 `test/house-surface-geometry.test.mjs` vergleicht die sichtbare Außenhaut mit den ursprünglichen Hauskörpern und prüft Flächenüberdeckungen, Tür-/Fensteröffnungen und den Treppenschacht. `test/house-surfaces-browser.cjs` vergleicht feste Blicke auf Boden-, Wand- und Dachanschlüsse und prüft ihre Stabilität bei kleinen Kamerabewegungen. Der Kameratest rendert außerdem die echte FPV-Spitze für alle vier Formen, drei Größen und vier Farbvarianten.
+
+`test/practice.test.mjs` prüft Tempo und Rückstöße; `test/practice-progress.test.mjs` prüft offene Türen und die zusätzliche Gutschriftssperre für Übungszusammenfassungen. `test/practice-browser.cjs` prüft den tatsächlichen Moduswechsel, alle Sterne ohne Profiländerung, ausbleibende Bestenlistenanfragen, Neuladen, Speicherfehler und mobile Bedienung in einem lokalen Test-Bundle.
 
 Geprüft für die Hausfassung: alle 22 offenen Türen in beide Richtungen, drei offene Seitenfenster, freie Sammelpositionen für alle 96 Sterne auch mit dem kostenlosen Standardflieger, Untertisch-/Stuhlflug, schmale Lücken bei unterschiedlichen Größen, schnelle Wandkontakte, Auf- und Abstieg im Treppenschacht, dauerhafte Käufe, Speicherfehler, Größenregler, zwei Boostplätze, Reload-Abrechnung und Tastaturfokus. Shopdarstellung wurde bei 320 und 390 Pixel Breite, im Querformat und am Desktop geprüft.
 

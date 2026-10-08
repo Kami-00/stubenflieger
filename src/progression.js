@@ -35,6 +35,7 @@ const startRoom = HOUSE.startRoomId || HOUSE.startRoom || HOUSE.rooms[0].id;
 const clone = value => JSON.parse(JSON.stringify(value));
 
 export function calculateRunScore(summary = {}) {
+  if (summary.practice === true) return 0;
   const count = value => Number.isInteger(value) && value > 0 ? value : 0;
   const seconds = Number.isFinite(summary.seconds) ? Math.min(60, Math.max(0, summary.seconds)) : 0;
   const visited = new Set(Array.isArray(summary.roomIds) ? summary.roomIds.map(id => roomAliases.get(id)).filter(id => id && id !== startRoom) : []);
@@ -150,6 +151,7 @@ export function createProgression(storage) {
     },
     creditRun(runId, summary) {
       requireRunId(runId);
+      if (summary?.practice === true) return { credited: 0, points: profile.points, score: 0, practice: true };
       refresh();
       const score = calculateRunScore(summary);
       if (!Number.isSafeInteger(score)) throw new Error('Dieses Flugergebnis ist ungültig.');

@@ -12,6 +12,7 @@ import { createKeyboardControls } from './keyboard.js';
 import { createDialogs } from './dialogs.js';
 import { createFlightCamera } from './camera.js';
 import { readViewMode, saveViewMode, updateViewButton } from './view-mode.js';
+import { normalizePracticeSpeed, scalePracticeDelta, createPracticeRebound } from './practice.js';
 
 const $ = id => document.getElementById(id);
 const show = (id, visible) => { $(id).hidden = !visible; };
@@ -20,6 +21,14 @@ const dialogs = createDialogs(document, $('app'));
 const progression = createProgression();
 const leaderboard = createLeaderboard();
 const PENDING_KEY = 'stubenflieger.pending-run.v1';
+const PRACTICE_KEY = 'stubenflieger.practice.v1';
+let playMode = 'normal', practiceSpeed = .5, practiceRebound;
+try {
+  const saved = JSON.parse(localStorage.getItem(PRACTICE_KEY) || 'null');
+  playMode = saved?.mode === 'practice' ? 'practice' : 'normal';
+  practiceSpeed = normalizePracticeSpeed(saved?.speed);
+} catch {}
+const practicing = () => run?.practice === true;
 const totalRooms = new Set(HOUSE.rooms.map(room => room.bonusId || room.id)).size;
 const nameOf = id => CATALOG.find(item => item.id === id)?.name || id;
 let keyboard, physics, view, run, tuning, equipped, shop, flightCamera, aircraftLength = .33;
@@ -70,7 +79,7 @@ function recoverRun() {
   try {
     const pending = JSON.parse(sessionStorage.getItem(PENDING_KEY) || 'null');
     if (pending?.id && pending.summary) {
-      progression.creditRun(pending.id, pending.summary);
+      if (pending.summary.practice !== true) progression.creditRun(pending.id, pending.summary);
       sessionStorage.removeItem(PENDING_KEY);
     }
   } catch (error) { reportStorage(error.message || 'Der letzte Run konnte noch nicht gespeichert werden.'); }
@@ -78,12 +87,13 @@ function recoverRun() {
 recoverRun();
 if (!progression.getStatus().available) reportStorage(progression.getStatus().error);
 function snapshotRun() {
-  if (!launched || settled || !run) return;
+  if (!launched || settled || !run || practicing()) return;
   try { sessionStorage.setItem(PENDING_KEY, JSON.stringify({ id: run.id, summary: run.summary(flightTime), savedAt: Date.now() })); }
   catch { reportStorage('Der laufende Run kann bei einem Neuladen verloren gehen. Website-Daten sind nicht verfügbar.'); }
 }
 function settleRun() {
   if (!launched || settled || !run) return null;
+  if (practicing()) { settled = true; return { credited: 0, score: 0 }; }
   const summary = run.summary(flightTime);
   snapshotRun();
   try {
@@ -128,21 +138,64 @@ function updateProfileLabels() {
   $('aircraft-summary').textContent = `${nameOf('plane:' + profile.equipped.form)} · ${Math.round(profile.equipped.size * 100)} % Größe · ${profile.equipped.boosts.length}/2 Boosts`;
 }
 function applyDoor(id, open) { physics.setDoorOpen(id, open); view.setDoorOpen(id, open); }
+function savePracticeSettings() {
+  try { localStorage.setItem(PRACTICE_KEY, JSON.stringify({ mode: playMode, speed: practiceSpeed })); } catch {}
+}
+function updatePracticeControls() {
+  const active = playMode === 'practice', percent = Math.round(practiceSpeed * 100);
+  $('play-mode').value = playMode;
+  $('practice-toggle').setAttribute('aria-pressed', String(active));
+  $('practice-toggle').textContent = 'Übungsmodus';
+  $('practice-speed').value = String(percent); $('practice-speed-value').textContent = `${percent} %`;
+  show('practice-settings', active); show('practice-badge', active);
+  $('practice-badge').textContent = `ÜBEN · ${percent} % · keine Belohnungen`;
+  $('practice-start-hint').textContent = active ? `Alle Türen offen · Unsterblich · ${percent} % Tempo. Im Menü anpassbar. Keine Belohnungen.` : 'In Ruhe üben: Tempo einstellen, alle Türen offen, unsterblich. Keine Belohnungen.';
+  $('pause-finish').textContent = active ? 'Übung beenden' : 'Run beenden & Punkte mitnehmen';
+  $('menu-restart').textContent = active ? 'Übung neu starten' : 'Run abschließen & neu starten';
+  $('again').textContent = active ? 'Weiter üben ↗' : 'Neuer Run ↗';
+  $('reset').setAttribute('aria-label', active ? 'Übung neu starten' : 'Run beenden und neu starten');
+}
+function changePlayMode(next) {
+  next = next === 'practice' ? 'practice' : 'normal';
+  if (next === playMode) return true;
+  // Settle the old run before changing modes; a failed normal save must not
+  // silently discard its earned rewards or turn them into practice progress.
+  if (launched && !settled && !settleRun()) {
+    hint('Der Run konnte noch nicht gespeichert werden. Der Modus bleibt unverändert.');
+    updatePracticeControls(); return false;
+  }
+  const fromMenu = dialogs.current() === 'menu';
+  playMode = next; savePracticeSettings(); reset();
+  if (fromMenu) openMenu();
+  return true;
+}
+$('play-mode').onchange = () => changePlayMode($('play-mode').value);
+$('practice-toggle').onclick = () => {
+  const next = playMode === 'practice' ? 'normal' : 'practice';
+  if (changePlayMode(next) && next === 'practice') openMenu();
+};
+$('practice-speed').oninput = () => {
+  practiceSpeed = normalizePracticeSpeed(Number($('practice-speed').value) / 100);
+  savePracticeSettings(); updatePracticeControls();
+};
 function prepareRun() {
   try { progression.refresh(); } catch (error) { reportStorage(error.message); }
   const profile = progression.getProfile();
-  run = createRunState(HOUSE, profile); equipped = profile.equipped;
+  run = createRunState(HOUSE, profile, undefined, { practice: playMode === 'practice' }); equipped = profile.equipped;
+  leaderboard.clearResult(); show('score-form', !practicing());
   tuning = flightTuning(equipped.form, equipped.size);
   physics.configureAircraft(equipped.form, equipped.size); physics.reset();
   aircraftLength = view.setAircraft(equipped.form, equipped.size, equipped.effect, equipped.color).length;
   view.resetCollectibles(profile.discoveredStarIds);
   firstDiscoveryBonus = rewardUntil = retryStarAt = 0; show('star-reward', false);
   for (const door of HOUSE.doors) applyDoor(door.id, run.opened.has(door.id));
+  practiceRebound ??= createPracticeRebound(physics, { bounds: HOUSE.bounds });
+  practiceRebound.reset();
   settled = launched = false; liftUntil = turboUntil = magnetUntil = recoveryUntil = 0; cushion = false;
   heading = HOUSE.start.heading || 0; speed = verticalSpeed = flightTime = power = dragPower = launchTurn = 0;
   view.plane.position.copy(physics.plane.position); view.plane.quaternion.copy(physics.plane.quaternion);
   view.resetTrail(view.plane.position); view.updateSling(0);
-  updateProfileLabels(); updateBoosts(); updateHUD();
+  updateProfileLabels(); updatePracticeControls(); updateBoosts(); updateHUD();
 }
 function reset() {
   if (launched && !settled && !settleRun()) {
@@ -156,9 +209,9 @@ function reset() {
   for (const id of ['stats', 'flight-controls', 'pause', 'wind-toast', 'door-progress', 'ceiling-warning']) show(id, false);
   for (const id of ['launch-panel', 'level-label', 'footer']) show(id, true);
   document.body.classList.remove('flying');
-  $('mission-copy').textContent = `Sammle ${HOUSE.collectibles.length} Sterne im ganzen Haus. Sterne öffnen Türen, neue Räume bringen je ${ROOM_BONUS} Punkte. Aufwinde verbinden die Stockwerke.`;
+  $('mission-copy').textContent = practicing() ? 'Erkunde das ganze Haus mit offenen Türen. Du prallst an Hindernissen ab und kannst unbegrenzt üben. Tempo im Menü einstellen; Punkte und Entdeckungen bleiben unverändert.' : `Sammle ${HOUSE.collectibles.length} Sterne im ganzen Haus. Sterne öffnen Türen, neue Räume bringen je ${ROOM_BONUS} Punkte. Aufwinde verbinden die Stockwerke.`;
   $('star-goal').textContent = ' / ' + HOUSE.collectibles.length;
-  hint('Sterne öffnen Türen. Auch unter Tischen und Stühlen warten welche.');
+  hint(practicing() ? 'Übungsmodus: Alle Türen offen. Unsterblich, ohne Belohnungen.' : 'Sterne öffnen Türen. Auch unter Tischen und Stühlen warten welche.');
   if (sensorEnabled && sensor) calibration = { ...sensor };
   followCamera(true); dialogs.close($('launch'));
 }
@@ -176,7 +229,8 @@ function cancelCharge() {
 function quickLaunch() { if (beginCharge()) { power = .75; launch(); } }
 function launch() {
   if (!charging || state !== 'ready' || dialogs.current()) return;
-  charging = false; state = 'flying'; launched = true; leaderboard.beginRun();
+  charging = false; state = 'flying'; launched = true;
+  if (!practicing()) leaderboard.beginRun();
   flightTime = 0; heading = (HOUSE.start.heading || 0) + launchTurn;
   speed = tuning.speed * (.75 + power * .35); verticalSpeed = .08 + power * .1;
   physics.plane.velocity.setZero(); physics.plane.collisionFilterMask = -1;
@@ -186,7 +240,7 @@ function launch() {
   if (sensorEnabled && sensor) calibration = { ...sensor };
   for (const id of ['launch-panel', 'level-label', 'footer']) show(id, false);
   for (const id of ['stats', 'flight-controls', 'pause', 'door-progress']) show(id, true);
-  document.body.classList.add('flying'); hint('Sterne sammeln, Türen öffnen. Im türkisen Aufwind steigen.');
+  document.body.classList.add('flying'); hint(practicing() ? 'In Ruhe üben: Hindernisse lassen dich abprallen. Keine Belohnungen.' : 'Sterne sammeln, Türen öffnen. Im türkisen Aufwind steigen.');
   snapshotRun(); tone(480, .4, 'triangle', .12); $('game').focus({ preventScroll: true });
 }
 
@@ -268,7 +322,7 @@ function pause(value = !paused) {
   if (paused) { snapshotRun(); dialogs.open('paused', $('resume')); } else dialogs.close($('game'));
 }
 $('pause').onclick = () => pause(); $('resume').onclick = () => pause(false);
-$('pause-finish').onclick = () => { dialogs.close(); paused = false; finish('Run abgeschlossen. Deine Punkte kommen ins Guthaben.'); };
+$('pause-finish').onclick = () => { dialogs.close(); paused = false; finish(practicing() ? 'Übung beendet. Dein Guthaben und deine Entdeckungen bleiben unverändert.' : 'Run abgeschlossen. Deine Punkte kommen ins Guthaben.'); };
 function suspend() {
   releaseStick(); snapshotRun();
   if (state === 'flying') { paused = true; if (!dialogs.current()) dialogs.open('paused', $('resume')); }
@@ -284,13 +338,15 @@ function finish(reason, success = false) {
 function result() {
   state = 'result';
   const summary = run.summary(flightTime), score = calculateRunScore(summary);
-  $('result-eyebrow').textContent = won ? 'DAS GANZE HAUS GESCHAFFT' : 'RUN ABGESCHLOSSEN';
-  $('result-title').textContent = won ? 'Alle Sterne an Bord.' : 'Noch eine Runde?';
+  $('result-eyebrow').textContent = practicing() ? 'ÜBUNG BEENDET' : won ? 'DAS GANZE HAUS GESCHAFFT' : 'RUN ABGESCHLOSSEN';
+  $('result-title').textContent = practicing() ? 'Bereit für den nächsten Flug?' : won ? 'Alle Sterne an Bord.' : 'Noch eine Runde?';
   $('result-copy').textContent = endReason;
   $('result-time').textContent = flightTime.toFixed(1) + ' s'; $('result-rooms').textContent = summary.roomIds.length;
   $('result-stars').textContent = `${run.stars.size} / ${HOUSE.collectibles.length}`;
-  $('result-reward').textContent = `+${(score + firstDiscoveryBonus).toLocaleString('de-DE')} Punkte · davon ${firstDiscoveryBonus.toLocaleString('de-DE')} Erstfundbonus und ${summary.roomIds.length * ROOM_BONUS} Raumbonus${settled ? ' · gespeichert' : ' · noch nicht vollständig gespeichert'}`;
-  leaderboard.setResult(summary); updateProfileLabels(); keyboard?.clear(); dialogs.open('result', $('again'));
+  $('result-reward').textContent = practicing() ? 'Übungsflug · keine Punkte, Entdeckungen oder Bestenlisteneinträge.' : `+${(score + firstDiscoveryBonus).toLocaleString('de-DE')} Punkte · davon ${firstDiscoveryBonus.toLocaleString('de-DE')} Erstfundbonus und ${summary.roomIds.length * ROOM_BONUS} Raumbonus${settled ? ' · gespeichert' : ' · noch nicht vollständig gespeichert'}`;
+  $('result-shop').textContent = practicing() ? 'Shop & Flugzeug' : 'Punkte im Shop ausgeben';
+  if (practicing()) leaderboard.clearResult(); else leaderboard.setResult(summary);
+  show('score-form', !practicing()); updateProfileLabels(); keyboard?.clear(); dialogs.open('result', $('again'));
 }
 let leaderboardReturn = 'menu', menuReturn = null, shopReturn = null;
 function openMenu() {
@@ -366,7 +422,7 @@ function updateHUD() {
   $('run-points').textContent = (calculateRunScore(summary) + firstDiscoveryBonus).toLocaleString('de-DE');
   $('flight-level').textContent = (room?.name || 'Über dem Garten').toUpperCase();
   const missing = nextDoor ? Math.max(0, nextDoor.threshold - run.stars.size) : 0;
-  $('door-progress').textContent = nextDoor ? `${nextDoor.name}: noch ${missing} ${missing === 1 ? 'Stern' : 'Sterne'}` : 'Alle Türen offen · finde die übrigen Sterne';
+  $('door-progress').textContent = practicing() ? 'Übungsmodus · alle Türen offen · keine Belohnungen' : nextDoor ? `${nextDoor.name}: noch ${missing} ${missing === 1 ? 'Stern' : 'Sterne'}` : 'Alle Türen offen · finde die übrigen Sterne';
   $('height').classList.toggle('danger', nearCeiling);
   show('ceiling-warning', nearCeiling && state === 'flying');
 }
@@ -395,7 +451,8 @@ function frame(now) {
   const dt = Math.min(Math.max(0, (now - previousFrame) / 1000), .04); previousFrame = now;
   if (!view) return;
   if (paused || dialogs.current()) { view.render(); return; }
-  clock += dt;
+  const simDt = practicing() ? scalePracticeDelta(dt, practiceSpeed) : dt;
+  clock += simDt;
   if (rewardUntil && clock > rewardUntil) { rewardUntil = 0; show('star-reward', false); }
   if (state === 'ready') {
     const aim = Number(keys.has('ArrowRight') || keys.has('KeyD')) - Number(keys.has('ArrowLeft') || keys.has('KeyA'));
@@ -409,17 +466,17 @@ function frame(now) {
     view.plane.rotation.set(0, -heading, 0, 'YXZ');
   }
   if (state === 'flying') {
-    flightTime += dt; readFlightInput(now, dt);
-    heading += input.steer * tuning.turnRate * dt;
+    flightTime += dt; readFlightInput(now, simDt);
+    heading += input.steer * tuning.turnRate * simDt;
     position.copy(physics.plane.position); previousPosition.copy(position);
     const thermal = HOUSE.thermals.find(item => Math.hypot(position.x - item.x, position.z - item.z) < item.r && position.y >= item.y && position.y < item.y + item.height);
     show('wind-toast', Boolean(thermal));
     if (thermal && !inThermal) tone(800, .3, 'sine', .04);
     inThermal = Boolean(thermal);
     const cruising = tuning.speed * (clock < turboUntil ? 1.65 : 1);
-    speed = MathUtils.damp(speed, cruising, .75, dt);
+    speed = MathUtils.damp(speed, cruising, .75, simDt);
     const { ride, x, z, targetVertical } = flightForces({ position, input, heading, speed, tuning, thermal, lift: clock < liftUntil });
-    verticalSpeed = MathUtils.damp(verticalSpeed, targetVertical, 4, dt);
+    verticalSpeed = MathUtils.damp(verticalSpeed, targetVertical, 4, simDt);
     velocity.set(x, verticalSpeed, z);
     flightEuler.set(Math.atan2(verticalSpeed, ride ? Math.max(2, speed) : speed) * .7, -heading, -input.steer * .42, 'YXZ');
     orientation.setFromEuler(flightEuler);
@@ -427,11 +484,19 @@ function frame(now) {
     if (clock < recoveryUntil) {
       velocity.copy(recoveryVelocity); orientation.copy(recoveryOrientation);
     }
-    const contact = physics.advance(dt, velocity, orientation);
+    const practiceStep = practicing() ? practiceRebound.advance(simDt, velocity, orientation) : null;
+    const contact = practiceStep ? practiceStep.contact : physics.advance(simDt, velocity, orientation);
+    if (practiceStep?.bounced || practiceStep?.recovering) {
+      heading = practiceStep.heading; speed = practiceStep.speed; verticalSpeed = practiceStep.verticalSpeed;
+      velocity.copy(practiceStep.velocity);
+      if (practiceStep.bounced) { hint('Abgeprallt – du kannst weiterüben.'); tone(300, .07); }
+    }
+    if (practiceStep?.relocated) view.resetTrail(physics.plane.position);
     view.plane.position.copy(physics.plane.position); view.plane.quaternion.copy(physics.plane.quaternion);
     const rewards = new Map();
     const pickups = view.collectStars(star => {
       if (clock < retryStarAt || !physics.canCollectStar(star, previousPosition, clock < magnetUntil ? .75 : 0)) return false;
+      if (practicing()) return true;
       try {
         // Persist discovery and its extra wallet credit before removing the star.
         rewards.set(star.id, progression.creditStar(run.id, star.id));
@@ -446,6 +511,12 @@ function frame(now) {
     for (const id of pickups) {
       const opened = run.collect(id);
       if (!opened) continue;
+      if (practicing()) {
+        $('star-reward').textContent = 'Übungsstern · keine Punkte';
+        $('star-reward').dataset.first = 'false'; rewardUntil = clock + 1.5; show('star-reward', true);
+        hint(run.stars.size === HOUSE.collectibles.length ? 'Alle Übungssterne gefunden. Du kannst weiterfliegen oder neu starten.' : `Übungsstern gefunden · ${run.stars.size}/${HOUSE.collectibles.length}`);
+        tone(1100, .1); continue;
+      }
       const reward = rewards.get(id); firstDiscoveryBonus += reward.bonus;
       $('star-reward').textContent = reward.firstDiscovery ? `Erstfund! +${reward.totalPoints} Punkte` : `+${reward.totalPoints} Punkte`;
       $('star-reward').dataset.first = String(reward.firstDiscovery);
@@ -455,9 +526,9 @@ function frame(now) {
       hint(opened.length ? opened.map(door => door.name).join(' · ') + ' ist jetzt offen!' : `Stern gesammelt! ${run.stars.size}/${HOUSE.collectibles.length}`);
     }
     const room = getRoomAt(physics.plane.position);
-    if (room && run.enterRoom(room.id)) { hint(`${room.name} entdeckt · +${ROOM_BONUS} Punkte`); tone(880, .2); snapshotRun(); }
+    if (room && run.enterRoom(room.id)) { hint(practicing() ? `${room.name} · Übungsflug ohne Punkte` : `${room.name} entdeckt · +${ROOM_BONUS} Punkte`); tone(880, .2); snapshotRun(); }
     if (pickups.length) { updateProfileLabels(); updateHUD(); snapshotRun(); }
-    if (contact.collided) {
+    if (!practicing() && contact.collided) {
       if (cushion) {
         cushion = false;
         recoveryVelocity.copy(velocity).multiplyScalar(-.55); recoveryOrientation.copy(physics.plane.quaternion);
@@ -465,9 +536,9 @@ function frame(now) {
         hint('Luftpolster! Eine Berührung abgefangen.'); tone(260, .18);
       } else finish(contact.body?.kind === 'floor' ? 'Der Boden kam näher als geplant.' : 'Ein Flügel oder der Rumpf hat ein Hindernis berührt.');
     }
-    if (run.summary().complete) finish('Alle Sterne gefunden – vom Keller bis in den Garten!', true);
+    if (!practicing() && run.summary().complete) finish('Alle Sterne gefunden – vom Keller bis in den Garten!', true);
     const b = HOUSE.bounds, p = physics.plane.position;
-    if (p.x < b.minX || p.x > b.maxX || p.z < b.minZ || p.z > b.maxZ || p.y < b.minY || p.y > b.maxY) finish('Du hast das Grundstück verlassen.');
+    if (!practicing() && (p.x < b.minX || p.x > b.maxX || p.z < b.minZ || p.z > b.maxZ || p.y < b.minY || p.y > b.maxY)) finish('Du hast das Grundstück verlassen.');
     view.updateTrail(physics.plane.position);
     saveTime += dt; if (saveTime > 1) { saveTime = 0; snapshotRun(); }
   }
@@ -485,5 +556,5 @@ try {
 } catch (error) { console.error(error); show('loading', false); dialogs.open('error'); }
 $('game').addEventListener('webglcontextlost', event => {
   event.preventDefault(); keyboard.clear(); releaseStick(); snapshotRun(); paused = true;
-  $('error-copy').textContent = 'Die 3D-Darstellung wurde unterbrochen. Dein letzter Punktestand wird beim Neuladen wiederhergestellt.'; dialogs.open('error');
+  $('error-copy').textContent = practicing() ? 'Die 3D-Darstellung wurde unterbrochen. Lade die Seite neu, um weiterzuüben.' : 'Die 3D-Darstellung wurde unterbrochen. Dein letzter Punktestand wird beim Neuladen wiederhergestellt.'; dialogs.open('error');
 });

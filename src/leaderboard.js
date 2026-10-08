@@ -8,11 +8,17 @@ async function api(path, options = {}) {
 export function createLeaderboard() {
   let ticket = null, result = null, refreshId = 0;
   try { $('pilot-name').value = localStorage.getItem('stubenflieger.pilot') || ''; } catch {}
+  function clearResult() {
+    ticket = result = null;
+    $('save-score').disabled = true; $('pilot-name').disabled = true;
+    $('score-status').textContent = '';
+  }
   function beginRun() {
     ticket = api('/api/house-runs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scoreVersion: 2 }) }).then(data => data.run).catch(() => null);
     result = null;
   }
-  function setResult({ blocks, stars, starIds, seconds, roomIds, complete }) {
+  function setResult({ blocks, stars, starIds, seconds, roomIds, complete, practice }) {
+    if (practice) { clearResult(); return; }
     result = { blocks, stars, starIds: [...starIds], flightMs: Math.floor(seconds * 1000), roomIds: [...roomIds], complete: Boolean(complete), ticket, saved: false };
     $('save-score').disabled = seconds < .5;
     $('save-score').textContent = 'Eintragen'; $('pilot-name').disabled = false;
@@ -48,6 +54,7 @@ export function createLeaderboard() {
     $('save-score').disabled = true; $('score-status').textContent = 'Dein Flug wird eingetragen …';
     try {
       const run = await active.ticket;
+      if (active !== result) return;
       if (!run) throw new Error('Dieser Flug konnte nicht online gestartet werden. Prüfe deine Verbindung und fliege noch eine Runde.');
       const data = await api('/api/house-leaderboard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run, name, scoreVersion: 2, starIds: active.starIds, blocks: active.blocks, stars: active.stars, flightMs: active.flightMs, roomIds: active.roomIds, complete: active.complete }) });
       if (active !== result) return;
@@ -58,5 +65,5 @@ export function createLeaderboard() {
       try { localStorage.setItem('stubenflieger.pilot', name); } catch {}
     } catch (error) { if (active === result) { $('score-status').textContent = error.message; $('save-score').disabled = false; } }
   });
-  return { beginRun, setResult, refresh };
+  return { beginRun, setResult, clearResult, refresh };
 }
