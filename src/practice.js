@@ -149,8 +149,18 @@ export function createPracticeRebound(physics, { bounds = physics.level?.bounds 
       speed: Math.hypot(velocity.x, velocity.z), verticalSpeed: velocity.y, velocity: plain(velocity) };
     let contact = move(dt, velocity, quaternion), bounced = contact.collided, relocated = false;
     if (contact.collided) {
-      stalled = body.position.distanceSquared(start) < .002 ** 2 ? stalled + 1 : 0;
+      const approachDistance = body.position.distanceTo(start);
       begin(velocity, contact.normal);
+      // A contact inside the physics safety margin can use none of this frame's
+      // travel. Spend its remaining time departing with the verified hull pose
+      // instead of freezing for a frame and treating that as a stuck corner.
+      if (approachDistance < .002) {
+        const remaining = Math.max(0, dt - approachDistance / Math.max(EPS, velocity.length()));
+        const departureVelocity = recovery.velocity;
+        const departure = move(remaining, departureVelocity, body.quaternion.clone());
+        if (departure.collided) { contact = departure; begin(departureVelocity, departure.normal); }
+      }
+      stalled = body.position.distanceSquared(start) < .002 ** 2 ? stalled + 1 : 0;
       if (stalled >= 2) relocated = backtrack(velocity) || leaveTightCorner(velocity);
     } else if (recovery) {
       stalled = 0; recovery.time += dt;

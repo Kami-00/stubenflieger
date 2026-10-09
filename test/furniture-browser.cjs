@@ -10,7 +10,30 @@ const root = path.resolve(__dirname, '..'), origin = 'http://127.0.0.1:8796';
 const baseline = process.env.FURNITURE_QA_BASELINE_REF, tag = process.env.FURNITURE_QA_TAG || (baseline ? 'before' : 'after');
 if (baseline) assert(/^[0-9a-f]{7,40}$/i.test(baseline)); assert(/^[a-z0-9-]+$/i.test(tag));
 const output = path.join(process.env.FURNITURE_QA_OUTPUT || 'D:/test/tmp/stubenflieger-furniture', tag);
+const viewFilter = process.env.FURNITURE_QA_VIEW_FILTER?.split(',');
+const functionalPairs = [
+  ['kitchen-Kuechenhocker','kitchen-Kuecheninsel'],['workshop-Hocker','workshop-Werkbank'],['office-Schreibtischstuhl','office-Schreibtisch'],
+  ['nursery-Kinderstuhl','nursery-Kinderschreibtisch'],['attic-east-Bastelstuhl','attic-east-Basteltisch'],
+];
 const closeups = [
+  { id: 'functional-hall-open-door', room: 'hall', camera: [6.25,2.45,9.05],look:[8,.55,10.45],openDoors:['front-door'] },
+  { id: 'functional-kitchen-seat', room: 'kitchen', camera: [4.65,1.6,11.25],look:[2.55,.45,9.95] },
+  { id: 'functional-workshop-seat', room: 'workshop', camera: [4.15,-1.65,3.15],look:[2.2,-2.65,1.05] },
+  { id: 'functional-office-seat', room: 'office', camera: [12.2,4.8,3.1],look:[10.35,3.7,1.0] },
+  { id: 'functional-nursery-seat', room: 'nursery', camera: [2.7,4.9,9.4],look:[4.1,3.65,10.95] },
+  { id: 'functional-attic-seat', room: 'attic-east', camera: [12.0,7.85,3.25],look:[10.3,6.8,1.2] },
+  { id: 'functional-living-tv', room: 'living', camera: [12.3,1.6,.75],look:[9.95,.55,3.05] },
+  { id: 'functional-bathroom-access', room: 'bathroom', camera: [11.1,4.75,9.8],look:[13.05,3.65,11.5] },
+  { id: 'functional-bathroom-overhead', room: 'bathroom', camera: [13.6,5.85,9.8],look:[12.5,3.55,11.45] },
+  { id: 'functional-guest-wc-access', room: 'guest-wc', camera: [11.35,1.55,9.45],look:[13,.5,8.2] },
+  { id: 'functional-dining-seats', room: 'dining', camera: [.7,2.65,6.2],look:[2.7,.45,3.5] },
+  { id: 'functional-garden-seats', room: 'garden', camera: [9.4,3,-4.7],look:[6.2,.5,-1.9] },
+  { id: 'functional-laundry-access', room: 'laundry', camera: [12.7,-1.45,3.6],look:[10,-2.5,1.25] },
+  { id: 'functional-laundry-rack', room: 'laundry', camera: [11.8,-1.55,3.8],look:[9.9,-2.45,2.35] },
+  { id: 'functional-storage-access', room: 'storage', camera: [11.65,1.65,11.6],look:[13.2,.85,10.6] },
+  { id: 'functional-sideboard-access', room: 'dining', camera: [2.5,1.6,5.05],look:[.9,.45,6.05] },
+  { id: 'functional-raised-bed', room: 'garden', camera: [14.3,1.65,9.7],look:[16.6,.85,7] },
+  { id: 'functional-reading-seat', room: 'upper-hall-south', camera: [6.0,5.45,7.5],look:[6.9,3.8,10.6] },
   { id: 'sofa-front', room: 'living', camera: [11.35, 1.1, 2.5], look: [13.45, .48, 4.3] },
   { id: 'sofa-end', room: 'living', camera: [11.75, .75, 6.4], look: [13.35, .4, 4.65] },
   { id: 'living-shelf', room: 'living', camera: [10.8, 1.35, 2.05], look: [10, .95, .3] },
@@ -60,7 +83,7 @@ function inside(point,part){const p=point.clone().sub(new Vector3(...part.positi
 function hideExtras(){view.plane.visible=false;view.sling.visible=false;view.effects.clear();for(const star of HOUSE.collectibles)view.scene.getObjectByName(star.id).visible=false;
  view.scene.traverse(o=>{if(o.isMesh&&o.geometry?.type==='TorusGeometry')o.visible=false;});}
 function show(config,pass='natural'){
- for(const door of HOUSE.doors)view.setDoorOpen(door.id,!config.id?.startsWith('room-'));
+ for(const door of HOUSE.doors)view.setDoorOpen(door.id,config.openDoors?config.openDoors.includes(door.id):!config.id?.startsWith('room-')&&!config.id?.startsWith('functional-'));
  physics.plane.position.set(...(config.plane||config.camera));view.camera.position.set(...config.camera);view.camera.lookAt(...config.look);view.camera.updateMatrixWorld(true);
  view.update(1/60,4);hideExtras();view.scene.overrideMaterial=pass==='normal'?normals:pass==='depth'?depth:null;view.scene.updateMatrixWorld(true);view.render();
  return {camera:view.camera.position.toArray(),look:config.look};}
@@ -95,6 +118,12 @@ function auditCoplanar(){
 }
 window.furnitureQA={
  show,
+ functional(pairs){const chairs=HOUSE.furniture.filter(f=>f.kind==='chair').map(chair=>{const parts=HOUSE.obstacles.filter(p=>p.furnitureId===chair.id),seat=parts.find(p=>p.kind==='chair-seat'),back=parts.find(p=>p.kind==='chair-back');
+   const direction=new Vector3(seat.position[0]-back.position[0],0,seat.position[2]-back.position[2]).normalize();
+   const targetId=pairs.find(p=>p[0]===chair.id)?.[1]||(chair.roomId==='dining'?'dining-Esstisch':chair.roomId==='garden'?'garden-Terrassentisch':null);
+   const target=HOUSE.obstacles.find(p=>p.furnitureId===targetId&&p.kind==='tabletop');
+   const targetDirection=target?new Vector3(target.position[0]-seat.position[0],0,target.position[2]-seat.position[2]).normalize():null;
+   return {id:chair.id,room:chair.roomId,seat:seat.position,back:back.position,direction:direction.toArray(),target:targetId,dot:targetDirection?direction.dot(targetDirection):null};});return {chairs};},
  colors(){const records=[];for(const mesh of meshes.filter(m=>m.userData.surfaceParts))for(const part of mesh.userData.surfaceParts){const expected=new Color(source.get(part.id).color),color=mesh.geometry.attributes.color;let maximum=0;
    for(let i=part.start;i<part.start+part.count;i++)maximum=Math.max(maximum,Math.abs(color.getX(i)-expected.r),Math.abs(color.getY(i)-expected.g),Math.abs(color.getZ(i)-expected.b));records.push({id:part.id,count:part.count,maximum});}return records;},
  metadata(){return {setupMs,furnitureBatches:meshes.filter(m=>m.userData.surfaceParts).map(m=>({name:m.name,parts:m.userData.surfaceParts.length,triangles:m.geometry.attributes.position.count/3,vertexColors:m.material.vertexColors})),rooms:HOUSE.rooms.map(r=>({id:r.id,name:r.name,floor:r.floor,bounds:r.bounds,furniture:HOUSE.furniture.filter(f=>f.roomId===r.id).length})),stars:HOUSE.collectibles.map(s=>s.id),doors:HOUSE.doors.map(d=>d.id)};},
@@ -166,9 +195,9 @@ window.furnitureQA={
       if(url.pathname==='/__furniture')return route.fulfill({contentType:'text/html',body:'<!doctype html><style>body{margin:0}canvas{display:block}</style><canvas></canvas><script type="module" src="/__furniture.js"></script>'});
       if(url.pathname==='/__furniture.js')return route.fulfill({contentType:'text/javascript',body:Buffer.from(bundle.outputFiles[0].contents)});return route.abort();});
     page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});await page.goto(origin+'/__furniture');await page.waitForFunction(()=>window.furnitureQA);
-    report.metadata=await page.evaluate(()=>window.furnitureQA.metadata());report.colors=await page.evaluate(()=>window.furnitureQA.colors());report.coplanar=await page.evaluate(()=>window.furnitureQA.audit());
+    report.metadata=await page.evaluate(()=>window.furnitureQA.metadata());report.functional=await page.evaluate(pairs=>window.furnitureQA.functional(pairs),functionalPairs);report.colors=await page.evaluate(()=>window.furnitureQA.colors());report.coplanar=await page.evaluate(()=>window.furnitureQA.audit());
     const rooms=await page.evaluate(()=>window.furnitureQA.rooms());assert.equal(new Set(rooms.map(r=>r.room)).size,report.metadata.rooms.length);
-    for(const config of [...rooms,...closeups]){
+    for(const config of [...rooms,...closeups].filter(config=>!viewFilter||viewFilter.includes(config.id))){
       await page.evaluate(config=>window.furnitureQA.show(config),config);await page.screenshot({path:path.join(output,config.id+'.png')});
       const result={...config,passes:{}};
       if(!config.id.startsWith('room-'))for(const pass of ['natural','normal','depth']){
@@ -203,6 +232,7 @@ window.furnitureQA={
     }
     if(!baseline){assert.equal(report.coplanar.duplicates.length,0,'Exposed furniture surfaces must have one rendered owner');assert.equal(report.coplanar.missing.length,0,'Exposed furniture surfaces remain closed');
       assert.equal(report.metadata.furnitureBatches.length,5);assert(report.metadata.furnitureBatches.every(b=>b.vertexColors));assert(report.colors.length>450);assert(report.colors.every(p=>p.maximum<1e-6),'Original linear-space vertex colors preserved');
+      for(const chair of report.functional.chairs.filter(c=>c.target))assert(chair.dot>.7,chair.id+': seat must face its table, backrest away from work surface');
       if(process.env.FURNITURE_QA_COMPARE){const previous=JSON.parse(await fs.readFile(process.env.FURNITURE_QA_COMPARE,'utf8'));assert.deepEqual(report.metadata.stars,previous.metadata.stars);assert.deepEqual(report.metadata.doors,previous.metadata.doors);}
       for(const view of report.views.filter(v=>v.passes.natural))assert.equal(view.passes.natural.furnitureFaceOrder.changed,0,view.id+': draw-order dependent furniture face pixels');}
     assert.deepEqual(errors,[]);assert.deepEqual(requests,[]);report.passed=true;await fs.writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2));

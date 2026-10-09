@@ -254,20 +254,46 @@ function table(roomId, name, x, z, w, d, height = .78, color = '#be986a') {
   part(roomId, name, 'tabletop', [w, .065, d], [x + w / 2, y + height - .0325, z + d / 2], color);
   for (const xx of [x + .07, x + w - .07]) for (const zz of [z + .07, z + d - .07]) part(roomId, name, 'table-leg', [.045, height - .065, .045], [xx, y + (height - .065) / 2, zz], '#806548');
 }
-function chair(roomId, name, x, z, w = .6, d = .65, color = '#80998c', facing = 'south') {
-  const y = supportHeight(roomId, x, z, w, d), seat = .49;
-  record(roomId, name, x, z, w, d, .94, 'chair', { underClearance: .435, baseY: y });
+function dryingRack(roomId, x, z, w, d) {
+  const y = base(roomId);
+  record(roomId, 'Waeschestaender', x, z, w, d, 1, 'drying-rack', { underClearance: .96 });
+  for (const xx of [x + .0225, x + w - .0225]) {
+    part(roomId, 'drying-rail', 'furniture', [.045, .04, d], [xx, y + .98, z + d / 2], '#bec5bd');
+    for (const zz of [z + .07, z + d - .07]) part(roomId, 'drying-leg', 'furniture', [.035, .96, .035], [xx, y + .48, zz], '#a0aca6');
+  }
+  for (let i = 0; i < 7; i++) part(roomId, 'drying-bar', 'detail', [w - .045, .025, .018], [x + w / 2, y + .9825, z + .06 + i * (d - .12) / 6], '#d3d7d1');
+}
+function chair(roomId, name, x, z, w = .6, d = .65, color = '#80998c', facing = 'south', targetName = null, seat = .49) {
+  const y = supportHeight(roomId, x, z, w, d), legs = seat - .055;
+  const item = record(roomId, name, x, z, w, d, seat + .45, 'chair', { underClearance: legs, baseY: y, seatHeight: seat, facing,
+    targetId: targetName ? `${roomId}-${targetName}` : null });
   part(roomId, name, 'chair-seat', [w, .055, d], [x + w / 2, y + seat - .0275, z + d / 2], color);
-  for (const xx of [x + .055, x + w - .055]) for (const zz of [z + .055, z + d - .055]) part(roomId, name, 'chair-leg', [.035, .435, .035], [xx, y + .2175, zz], '#856c4c');
-  const horizontal = facing === 'south' || facing === 'north';
-  part(roomId, name, 'chair-back', horizontal ? [w, .45, .045] : [.045, .45, d], [horizontal ? x + w / 2 : (facing === 'east' ? x + .0225 : x + w - .0225), y + .715, horizontal ? (facing === 'south' ? z + .0225 : z + d - .0225) : z + d / 2], color);
+  for (const xx of [x + .055, x + w - .055]) for (const zz of [z + .055, z + d - .055]) part(roomId, name, 'chair-leg', [.035, legs, .035], [xx, y + legs / 2, zz], '#856c4c');
+  const cardinal = facing === 'southwest' ? 'south' : facing, horizontal = cardinal === 'south' || cardinal === 'north';
+  part(roomId, name, 'chair-back', horizontal ? [w, .45, .045] : [.045, .45, d], [horizontal ? x + w / 2 : (cardinal === 'east' ? x + .0225 : x + w - .0225), y + seat + .225, horizontal ? (cardinal === 'south' ? z + .0225 : z + d - .0225) : z + d / 2], color);
+  if (facing === 'southwest') {
+    // Turn the complete armchair towards the television, keeping the authored
+    // seat centre (and its low star) in place. Visual and collider parts agree.
+    const angle = -Math.PI / 4, cx = x + w / 2, cz = z + d / 2;
+    for (const piece of obstacles.filter(piece => piece.furnitureId === item.id)) {
+      const dx = piece.position[0] - cx, dz = piece.position[2] - cz;
+      piece.position[0] = cx + Math.cos(angle) * dx + Math.sin(angle) * dz;
+      piece.position[2] = cz - Math.sin(angle) * dx + Math.cos(angle) * dz;
+      piece.rotation[1] = angle;
+    }
+  }
 }
 function cabinet(roomId, name, x, z, w, d, height = 1.7, back = null, color = '#b28c60', open = false) {
-  const y = base(roomId); record(roomId, name, x, z, w, d, height, 'cabinet', { back });
+  const y = base(roomId), axis = back?.axis || (w >= d ? 'z' : 'x');
+  const roomBounds = rooms.find(room => room.id === roomId).bounds;
+  const towardRoom = axis === 'x' ? (roomBounds.minX + roomBounds.maxX) / 2 - (x + w / 2) : (roomBounds.minZ + roomBounds.maxZ) / 2 - (z + d / 2);
+  const side = back ? (back.edge === 'max' ? -1 : 1) : Math.sign(towardRoom) || 1;
+  const facing = axis === 'x' ? (side > 0 ? 'east' : 'west') : (side > 0 ? 'south' : 'north');
+  record(roomId, name, x, z, w, d, height, 'cabinet', { back, facing });
   if (!open) {
     part(roomId, name, 'cabinet', [w, height, d], [x + w / 2, y + height / 2, z + d / 2], color);
     // Handles project from the accessible front, never from the wall-backed side.
-    const alongX = (back?.axis || (w >= d ? 'z' : 'x')) === 'z', side = back?.edge === 'max' ? -1 : 1;
+    const alongX = axis === 'z';
     const count = Math.max(1, Math.floor((alongX ? w : d) / .55));
     for (let i = 0; i < count; i++) {
       const centre = alongX ? [x + (i + .5) * w / count, y + height * .56, z + (side > 0 ? d : 0) + side * .005]
@@ -288,14 +314,14 @@ function solid(roomId, name, x, z, w, d, height, color) {
   record(roomId, name, x, z, w, d, height, 'solid');
   part(roomId, name, 'furniture', [w, height, d], [x + w / 2, base(roomId) + height / 2, z + d / 2], color);
 }
-function plant(roomId, x, z, r = .3, height = 1.05, elevation = 0) {
-  const y = base(roomId) + elevation; record(roomId, 'Pflanze', x - r, z - r, r * 2, r * 2, height, 'plant', { baseY: y });
-  part(roomId, 'pot', 'plant-pot', [r, .3, r], [x, y + .15, z], '#b68460');
-  part(roomId, 'stem', 'plant-stem', [.035, height * .7, .035], [x, y + height * .47, z], '#627a48');
+function plant(roomId, x, z, r = .3, height = 1.05, elevation = 0, planted = false) {
+  const y = base(roomId) + elevation; record(roomId, 'Pflanze', x - r, z - r, r * 2, r * 2, height, 'plant', { baseY: y, planted });
+  if (!planted) part(roomId, 'pot', 'plant-pot', [r, .3, r], [x, y + .15, z], '#b68460');
+  part(roomId, 'stem', 'plant-stem', [.035, height * (planted ? .82 : .7), .035], [x, y + height * (planted ? .41 : .47), z], '#627a48');
   for (let i = 0; i < 4; i++) part(roomId, 'leaf', 'foliage', [r * .85, .07, r * .52], [x + Math.cos(i * 1.8) * r * .45, y + height * (.65 + .09 * i), z + Math.sin(i * 1.8) * r * .45], ['#779551', '#52784b'][i % 2], { rotation: [0, i * 1.8, .28 * (i % 2 ? 1 : -1)] });
 }
 function bed(roomId, x, z, w, d) {
-  const y = base(roomId); record(roomId, 'Bett', x, z, w, d, .75, 'bed');
+  const y = base(roomId); record(roomId, 'Bett', x, z, w, d, .75, 'bed', { facing: d >= w ? 'south' : 'east' });
   part(roomId, 'bed-base', 'bed', [w, .3, d], [x + w / 2, y + .24, z + d / 2], '#99704e');
   for (const xx of [x + .12, x + w - .12]) for (const zz of [z + .12, z + d - .12]) part(roomId, 'bed-leg', 'bed', [.07, .09, .07], [xx, y + .045, zz], '#99704e');
   part(roomId, 'mattress', 'bed', [w - .06, .2, d - .06], [x + w / 2, y + .49, z + d / 2], '#ede1cc');
@@ -305,27 +331,28 @@ function bed(roomId, x, z, w, d) {
   part(roomId, 'pillow', 'bed', alongZ ? [w * .7, .12, .43] : [.43, .12, d * .7], [alongZ ? x + w / 2 : x + .4, y + .65, alongZ ? z + .4 : z + d / 2], '#fff1d8');
 }
 function toilet(roomId, x, z) {
-  const y = base(roomId); record(roomId, 'Toilette', x, z, .78, .6, .82, 'sanitary');
+  const y = base(roomId); record(roomId, 'Toilette', x, z, .78, .6, .82, 'sanitary', { facing: 'west' });
   part(roomId, 'cistern', 'sanitary', [.18, .82, .6], [x + .69, y + .41, z + .3], '#f5eee0');
   part(roomId, 'toilet-base', 'sanitary', [.43, .4, .35], [x + .34, y + .2, z + .3], '#ebe7db');
   part(roomId, 'toilet-seat', 'sanitary', [.57, .07, .51], [x + .315, y + .435, z + .3], '#faf5e7');
 }
 function basin(roomId, x, z, w, d) {
   solid(roomId, 'Waschtisch', x, z, w, d, .76, '#9baeb1');
+  activeFurniture.facing = w >= d ? 'south' : 'east';
   part(roomId, 'basin', 'sanitary', [w, .09, d], [x + w / 2, base(roomId) + .805, z + d / 2], '#f7eedc');
 }
 const back = (axis, value, edge) => ({ axis, value, edge });
 
 // Ground floor furniture: wall-hugging storage and separately modelled legs.
 table('dining', 'Esstisch', 1.8, 2.3, 1.8, 2.4);
-for (const z of [2.5, 4]) { chair('dining', `Stuhl-west-${z}`, .85, z, .65, .6, '#ba9664', 'east'); chair('dining', `Stuhl-east-${z}`, 3.95, z, .65, .6, '#ba9664', 'west'); }
-chair('dining', 'Stuhl-nord', 2.4, 1.3); chair('dining', 'Stuhl-sued', 2.4, 5.15, .6, .65, '#ba9664', 'north');
+for (const z of [2.5, 4]) { chair('dining', `Stuhl-west-${z}`, .85, z, .65, .6, '#ba9664', 'east', 'Esstisch'); chair('dining', `Stuhl-east-${z}`, 3.95, z, .65, .6, '#ba9664', 'west', 'Esstisch'); }
+chair('dining', 'Stuhl-nord', 2.4, 1.3, .6, .65, '#80998c', 'south', 'Esstisch'); chair('dining', 'Stuhl-sued', 2.4, 5.15, .6, .65, '#ba9664', 'north', 'Esstisch');
 cabinet('dining', 'Geschirrschrank', 3.63, .07, 1.8, .5, 1.9, back('z', 0, 'min'));
-cabinet('dining', 'Sideboard', .07, 5.35, .55, 1.3, .85, back('x', 0, 'min')); plant('dining', 1.2, 6.3);
+cabinet('dining', 'Sideboard', .07, 5.35, .55, 1.3, .85, back('x', 0, 'min')); plant('dining', 1.55, 6.3);
 solid('kitchen', 'Zeile-Nord', .07, 7.07, 2.63, .63, .9, '#93afa0');
 solid('kitchen', 'Zeile-West', .07, 7.7, .63, 3.15, .9, '#93afa0');
 cabinet('kitchen', 'Kuehlschrank', .07, 11.1, .78, .83, 1.88, back('x', 0, 'min'), '#d9ded1');
-table('kitchen', 'Kuecheninsel', 1.8, 9, 2.1, .95, .9, '#d9c9a7'); chair('kitchen', 'Kuechenhocker', 1.85, 10.35, .6, .6);
+table('kitchen', 'Kuecheninsel', 1.8, 9, 2.1, .95, .9, '#d9c9a7'); chair('kitchen', 'Kuechenhocker', 1.85, 10.35, .6, .6, '#80998c', 'north', 'Kuecheninsel', .6);
 part('kitchen', 'sink', 'detail', [.9, .03, .4], [.98, .915, 7.38], '#7e9797', { furnitureId: 'kitchen-Zeile-Nord' });
 for (const z of [8.2, 8.65]) part('kitchen', 'hob', 'detail', [.32, .018, .32], [.385, .909, z], '#4e5b5a', { furnitureId: 'kitchen-Zeile-West' });
 solid('living', 'Sofa-base', 13, 3, .93, 2.75, .38, '#668e7d');
@@ -338,21 +365,21 @@ part('living', 'television', 'detail', [.055, .72, 1.3], [8.77, .94, 3.5], '#344
 part('living', 'television-foot', 'detail', [.18, .025, .5], [8.77, .5125, 3.5], '#44544d');
 part('living', 'television-stand', 'detail', [.045, .075, .11], [8.77, .5425, 3.5], '#44544d');
 cabinet('living', 'Buecherregal', 9, .07, 2, .5, 1.85, back('z', 0, 'min'), '#b99466', true);
-chair('living', 'Sessel', 10.1, 1.25, .85, .85, '#c18f66'); plant('living', 13.4, 6.4, .3);
+chair('living', 'Sessel', 10.1, 1.32, .85, .85, '#c18f66', 'southwest', 'TV-Bank'); plant('living', 13.4, 6.4, .3);
 cabinet('hall', 'Flurkonsole', 5.57, 7.15, .33, 1.1, .78, back('x', 5.5, 'min'));
-table('hall', 'Sitzbank', 8, 10.35, .43, 1, .45); plant('hall', 5.95, 11.5, .23);
+table('hall', 'Sitzbank', 8, 9.7, .43, .8, .45); plant('hall', 5.95, 11.5, .23);
 cabinet('cloakroom', 'Garderobe', 8.99, 11.4, 1.9, .53, 1.95, back('z', 12, 'max'), '#a5ad92');
 table('cloakroom', 'Schuhbank', 8.57, 10.65, .43, .72, .44);
 cabinet('cloakroom', 'Schuhschrank', 8.9, 7.07, 1.6, .33, .95, back('z', 7, 'min'));
 toilet('guest-wc', 13.15, 8.1); basin('guest-wc', 12.4, 7.07, .9, .43);
 cabinet('guest-wc', 'Handtuecher', 11.45, 9.5, 1.15, .43, 1.2, back('z', 10, 'max'), '#aec0b6');
-cabinet('storage', 'Abstellregal', 12.55, 10.07, 1.38, .38, 1.55, back('z', 10, 'min'), '#af9c76', true);
+cabinet('storage', 'Abstellregal', 12.05, 10.07, 1.38, .38, 1.55, back('z', 10, 'min'), '#af9c76', true);
 cabinet('storage', 'Putzschrank', 13.5, 10.73, .43, 1.18, 1.9, back('x', 14, 'max'));
 
 // Cellar.
-table('workshop', 'Werkbank', .6, .07, 3.5, .8, .87); cabinet('workshop', 'Werkzeugschrank', 4.88, .5, .55, 2.7, 1.85, back('x', 5.5, 'max'), '#929c8b'); chair('workshop', 'Hocker', 1.8, 1.4); solid('workshop', 'Werkzeugkiste', .07, 3, .78, .8, .5, '#ba8650');
+table('workshop', 'Werkbank', .6, .07, 3.5, .8, .87); cabinet('workshop', 'Werkzeugschrank', 4.88, .5, .55, 2.7, 1.85, back('x', 5.5, 'max'), '#929c8b'); chair('workshop', 'Hocker', 1.8, 1.4, .6, .65, '#80998c', 'north', 'Werkbank', .57); solid('workshop', 'Werkzeugkiste', .07, 3, .78, .8, .5, '#ba8650');
 for (const x of [8.57, 9.7]) { solid('laundry', 'Waschgeraet', x, .07, 1, .98, .92, '#dfe3d8'); part('laundry', 'Waschfenster', 'detail', [.58, .58, .024], [x + .5, -3.15 + .46, 1.06], '#729498'); }
-table('laundry', 'Waeschetisch', 12, .07, 1.8, .63); solid('laundry', 'Waeschekorb', 12.5, 2.3, .8, .8, .6, '#bbaf8c'); table('laundry', 'Waeschestaender', 9, 2, 1.8, .8, 1, '#bec5bd');
+table('laundry', 'Waeschetisch', 12, .07, 1.8, .63); solid('laundry', 'Waeschekorb', 12.5, 2.3, .8, .8, .6, '#bbaf8c'); dryingRack('laundry', 9, 2, 1.8, .8);
 cabinet('pantry', 'Vorratsregal-links', .07, 7.7, .63, 3.4, 1.85, back('x', 0, 'min'), '#b49569', true);
 cabinet('pantry', 'Vorratsregal-rechts', 4.8, 8.6, .63, 3.1, 1.85, back('x', 5.5, 'max'), '#b49569', true);
 cabinet('pantry', 'Vorratsschrank', 1.4, 11.45, 2.5, .48, 1.65, back('z', 12, 'max'));
@@ -364,33 +391,36 @@ cabinet('cellar-hall', 'Regal-West', .07, 5.45, .33, 1.1, 1.1, back('x', 0, 'min
 // Upper floor.
 bed('bedroom', 1.65, .07, 2, 2.55); solid('bedroom', 'Nachttisch-links', .95, .1, .5, .5, .52, '#b18c67'); solid('bedroom', 'Nachttisch-rechts', 3.85, .1, .5, .5, .52, '#b18c67');
 cabinet('bedroom', 'Kleiderschrank', .07, 3.15, .58, 1.6, 2.05, back('x', 0, 'min'), '#b8aa92');
-table('office', 'Schreibtisch', 9, .07, 2.8, .8); chair('office', 'Schreibtischstuhl', 10, 1.3);
+table('office', 'Schreibtisch', 9, .07, 2.8, .8); chair('office', 'Schreibtischstuhl', 10, 1.3, .6, .65, '#80998c', 'north', 'Schreibtisch');
 part('office', 'monitor', 'detail', [1.05, .55, .045], [10.225, 4.295, .27], '#3e585a', { furnitureId: 'office-Schreibtisch' });
 part('office', 'monitor-foot', 'detail', [.5, .025, .28], [10.225, 3.9425, .27], '#44544d', { furnitureId: 'office-Schreibtisch' });
 part('office', 'monitor-stand', 'detail', [.07, .08, .045], [10.225, 3.98, .27], '#44544d', { furnitureId: 'office-Schreibtisch' });
 cabinet('office', 'Buecherregal-Nord', 13.4, .07, .53, 1.18, 1.8, back('x', 14, 'max'), '#b7986e', true); cabinet('office', 'Buecherregal-Sued', 13.4, 3.55, .53, 1.2, 1.8, back('x', 14, 'max'), '#b7986e', true);
-bed('nursery', .07, 7.07, 2.4, 1.2); table('nursery', 'Kinderschreibtisch', 3, 11.15, 2.3, .78, .74); chair('nursery', 'Kinderstuhl', 3.8, 10.15, .6, .65, '#d9b269', 'north'); cabinet('nursery', 'Spielzeugschrank', 4.85, 8.7, .58, 1, 1.4, back('x', 5.5, 'max'), '#87a6a0', true);
+bed('nursery', .07, 7.07, 2.4, 1.2); table('nursery', 'Kinderschreibtisch', 3, 11.15, 2.3, .78, .74); chair('nursery', 'Kinderstuhl', 3.8, 10.15, .6, .65, '#d9b269', 'south', 'Kinderschreibtisch'); cabinet('nursery', 'Spielzeugschrank', 4.85, 8.7, .58, 1, 1.4, back('x', 5.5, 'max'), '#87a6a0', true);
 for (const [i, x, z] of [[0, 2.1, 9.75], [1, 2.65, 10.25], [2, 3, 9.75]]) solid('nursery', `Bauklotz-${i}`, x, z, .2, .2, .2, ['#c78256', '#90a576', '#d7bc6e'][i]);
 // The bathtub consists of its actual rim and bottom, not an invisible solid box.
 record('bathroom', 'Badewanne', 11.75, 7.07, 2.18, 1, .65, 'bath');
 part('bathroom', 'bath-bottom', 'sanitary', [2.18, .12, 1], [12.84, 3.21, 7.57], '#e7e8dc');
 for (const z of [7.12, 8.02]) part('bathroom', 'bath-rim', 'sanitary', [2.18, .58, .1], [12.84, 3.5, z], '#f2efe3');
 for (const x of [11.8, 13.88]) part('bathroom', 'bath-end', 'sanitary', [.1, .58, 1], [x, 3.5, 7.57], '#f2efe3');
-basin('bathroom', 8.57, 9, .48, 1.15); toilet('bathroom', 13.15, 11.3); cabinet('bathroom', 'Badschrank', 12.1, 11.5, .95, .43, 1.05, back('z', 12, 'max'), '#a6bab6');
-chair('upper-hall-south', 'Lesesessel', 6.05, 10.2, .9, .85, '#ac8779'); cabinet('upper-hall-south', 'Leseregal', 7.9, 8.8, .53, 2.55, 1.75, back('x', 8.5, 'max'), '#ad8e61', true);
+basin('bathroom', 8.57, 9, .48, 1.15); toilet('bathroom', 13.15, 11.3); cabinet('bathroom', 'Badschrank', 9.5, 11.5, .95, .43, 1.05, back('z', 12, 'max'), '#a6bab6');
+chair('upper-hall-south', 'Lesesessel', 6.05, 10.2, .9, .85, '#ac8779', 'east', 'Leseregal'); cabinet('upper-hall-south', 'Leseregal', 7.9, 8.8, .53, 2.55, 1.75, back('x', 8.5, 'max'), '#ad8e61', true);
 cabinet('upper-hall', 'Konsole-West', .07, 5.4, .38, 1.2, .8, back('x', 0, 'min')); cabinet('upper-hall', 'Schrank-Ost', 13.4, 5.2, .53, 1.6, 1.4, back('x', 14, 'max'));
 
 // Attic and garden.
 for (const [i, x, z, w, d] of [[0, 1.6, .6, 1.3, .8], [1, 3.5, .5, 1.25, 1], [2, 1.9, 2, 1, .65]]) solid('attic-west', `Koffer-${i}`, x, z, w, d, .48 + i * .13, ['#9b7658', '#c3a071', '#889687'][i]);
-table('attic-east', 'Basteltisch', 9.15, .12, 2.4, 1.1); chair('attic-east', 'Bastelstuhl', 9.95, 1.55);
+table('attic-east', 'Basteltisch', 9.15, .12, 2.4, 1.1); chair('attic-east', 'Bastelstuhl', 9.95, 1.55, .6, .65, '#80998c', 'north', 'Basteltisch');
 cabinet('attic-east', 'Kniestockregal', 12.15, .35, .5, 2.3, .98, null, '#ac8d65', true);
 table('attic', 'Dachtisch', 8.3, 8.1, 1.8, 1); solid('attic', 'Truhe-Ost', 10.7, 10.75, 1.3, .75, .65, '#a5855d'); solid('attic', 'Truhe-West', 2, 10.65, 1.4, .75, .58, '#aa8c62'); cabinet('attic', 'Dachschrank', 3.65, 11.5, 1.8, .43, 1.2, back('z', 12, 'max'));
 table('garden', 'Terrassentisch', 5, -2.4, 2.4, 1.1, .8, '#c0ad83');
-for (const x of [5.15, 6.65]) { chair('garden', `Terrassenstuhl-N-${x}`, x, -3.25, .6, .65, '#9daa84'); chair('garden', `Terrassenstuhl-S-${x}`, x, -1, .6, .65, '#9daa84', 'north'); }
-chair('garden', 'Terrassenstuhl-West', 4.15, -2.15, .65, .6, '#9daa84', 'east'); chair('garden', 'Terrassenstuhl-Ost', 7.7, -2.15, .65, .6, '#9daa84', 'west');
+for (const x of [5.15, 6.65]) { chair('garden', `Terrassenstuhl-N-${x}`, x, -3.25, .6, .65, '#9daa84', 'south', 'Terrassentisch'); chair('garden', `Terrassenstuhl-S-${x}`, x, -1, .6, .65, '#9daa84', 'north', 'Terrassentisch'); }
+chair('garden', 'Terrassenstuhl-West', 4.15, -2.15, .65, .6, '#9daa84', 'east', 'Terrassentisch'); chair('garden', 'Terrassenstuhl-Ost', 7.7, -2.15, .65, .6, '#9daa84', 'west', 'Terrassentisch');
 table('garden', 'Gartenbank', -4, 4, 2.5, .65, .52);
-solid('garden', 'Hochbeet', 15.65, 4.9, 1.8, 4.1, .65, '#9c865e');
-for (let j = 0; j < 4; j++) for (const x of [16.1, 16.9]) plant('garden', x, 5.4 + .9 * j, .18, 1.02, .65);
+record('garden', 'Hochbeet', 15.65, 4.9, 1.8, 4.1, .65, 'planter');
+for (const x of [15.69, 17.41]) part('garden', 'raised-bed-side', 'furniture', [.08, .65, 4.1], [x, .325, 6.95], '#9c865e');
+for (const z of [4.94, 8.96]) part('garden', 'raised-bed-end', 'furniture', [1.64, .65, .08], [16.55, .325, z], '#9c865e');
+part('garden', 'soil', 'detail', [1.64, .6, 3.94], [16.55, .3, 6.95], '#66513a');
+for (let j = 0; j < 4; j++) for (const x of [16.1, 16.9]) plant('garden', x, 5.4 + .9 * j, .18, 1.02, .6, true);
 for (const [x, z, radius] of [[15.5, -3.2, 1.25], [-2, -4, 1.1], [-2.75, 13.5, .95]]) {
   record('garden', 'Baum', x - radius, z - radius, radius * 2, radius * 2, 4.5, 'tree');
   part('garden', 'tree-trunk', 'tree', [.35, 3.3, .35], [x, 1.65, z], '#816442');

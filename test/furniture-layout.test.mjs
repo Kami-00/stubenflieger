@@ -42,7 +42,7 @@ const close = (actual, expected, message) => assert(Math.abs(actual - expected) 
 test('all furniture parts belong to unique, complete objects with exact rotated bounds inside their room', () => {
   assert.equal(groups.size, 103);
   assert.equal(groups.size, HOUSE.furniture.length);
-  assert.equal(parts.length, 502);
+  assert.equal(parts.length, 506);
   assert.equal(new Set(HOUSE.furniture.map(item => item.roomId)).size, 23);
   for (const part of parts) {
     assert(groups.has(part.furnitureId), `${part.id}: missing furniture object`);
@@ -163,10 +163,14 @@ test('terrace furniture rests on its paving and raised-bed plants sit above the 
     close(item.baseY, paving.bounds.max.y, `${item.id}: on paving`);
     for (const leg of groups.get(item.id).filter(part => part.kind.endsWith('-leg'))) close(leg.bounds.min.y, paving.bounds.max.y, `${leg.id}: not buried`);
   }
-  const raisedBed = byKind('garden-Hochbeet', 'furniture')[0];
+  const soil = named('garden-Hochbeet', 'soil');
   const plants = HOUSE.furniture.filter(item => item.roomId === 'garden' && item.kind === 'plant');
   assert.equal(plants.length, 8);
-  for (const plant of plants) close(byKind(plant.id, 'plant-pot')[0].bounds.min.y, raisedBed.bounds.max.y, `${plant.id}: on raised bed`);
+  for (const plant of plants) {
+    assert.equal(plant.planted, true);
+    assert.equal(byKind(plant.id, 'plant-pot').length, 0, `${plant.id}: planted directly in soil`);
+    close(byKind(plant.id, 'plant-stem')[0].bounds.min.y, soil.bounds.max.y, `${plant.id}: rooted at soil surface`);
+  }
 });
 
 test('the furniture corrections preserve all 96 established star IDs and positions', () => {

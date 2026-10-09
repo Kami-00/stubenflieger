@@ -72,6 +72,21 @@ test('oblique furniture uses its real world-space normal', () => {
   assert(result.hits[0].contact.normal.dot(normal) > .9999);
 });
 
+test('a contact inside the one-millimetre safety gap departs during the same frame', () => {
+  const physics = createPhysics(level([box('wall', [20, 5, .1], [0, 1, 0])]));
+  const nose = Math.min(...physics.aircraft.parts.flatMap(part => part.vertices.map(vertex => vertex[2])));
+  physics.plane.position.set(0, 1, .05 - nose + .0005);
+  const start = physics.plane.position.clone(), rebound = createPracticeRebound(physics);
+  const result = rebound.advance(1 / 60, new Vec3(0, 0, -1.65), new Quaternion());
+  assert.equal(result.bounced, true);
+  assert.equal(result.contact.body.obstacleId, 'wall');
+  assert.equal(result.relocated, false);
+  assert(result.velocity.z > 0);
+  assert(physics.plane.position.z - start.z > .02, 'unused frame time must move away, not produce a stationary contact frame');
+  assert(physics.plane.position.distanceTo(start) <= 1.65 / 60 + 1e-9, 'rebound must not exceed the frame travel budget');
+  assert.equal(physics.advance(0, new Vec3()).collided, false);
+});
+
 test('floor and ceiling contacts rebound repeatedly without sticking or death', () => {
   const physics = createPhysics(level([box('floor', [100, .1, 100], [0, -.05, 0]), box('ceiling', [100, .1, 100], [0, 2.05, 0])], [0, 1, 0]));
   const result = fly(physics, new Vec3(.6, -.9, -.9), 12);
