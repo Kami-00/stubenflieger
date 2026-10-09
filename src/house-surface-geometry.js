@@ -5,7 +5,7 @@ import { BufferGeometry, Euler, Float32BufferAttribute, Matrix4 } from 'three';
 // before their transforms would pull shared roof/wall vertices apart again.
 const EPSILON = 1e-7;
 const STRUCTURE = new Set(['wall', 'floor', 'roof']);
-const PRIORITY = { floor: 3, wall: 2, roof: 1 };
+const PRIORITY = { trim: 4, floor: 3, wall: 2, roof: 1 };
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const subtract = (a, b) => a.map((value, axis) => value - b[axis]);
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -104,11 +104,12 @@ function uvFor(point, axis, sign) {
 /**
  * Map structural part IDs to their union exterior BufferGeometry. Positions and
  * normals are world-space: use identity mesh transforms. UVs stay source-local.
- * Ownership is deterministic, floors first, so adjacent materials cannot fight
- * for one coplanar surface. Furniture and source data are never changed.
+ * Door jambs own their exposed reveal faces; otherwise floors take priority.
+ * This removes wall faces exactly beneath the trim instead of depth-offsetting
+ * either material. Furniture, window trims and collision boxes stay unchanged.
  */
 export function buildHouseSurfaceGeometries(parts) {
-  const boxes = parts.filter(part => STRUCTURE.has(part.kind)).map(boxFor);
+  const boxes = parts.filter(part => STRUCTURE.has(part.kind) || (part.kind === 'trim' && part.doorFrame === true)).map(boxFor);
   const result = new Map();
   for (const box of boxes) {
     const neighbours = boxes.filter(other => other !== box && overlaps(box, other));

@@ -16,7 +16,6 @@ import { createAircraftEffects } from './aircraft-effects.js';
 import { buildHouseSurfaceGeometries } from './house-surface-geometry.js';
 
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
-const STRUCTURE = new Set(['wall', 'floor', 'roof']);
 
 export function createScene(canvas, physics, getViewport = () => ({ width: canvas.clientWidth, height: canvas.clientHeight })) {
   const house = physics.house || physics.level || HOUSE;
@@ -61,7 +60,7 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   const batches = new Map();
   for (const part of house.obstacles) {
     const group = floorGroups.get(part.floor) || floorGroups.get('garden');
-    if (STRUCTURE.has(part.kind)) {
+    if (surfaceGeometries.has(part.id)) {
       const mat = material(part.color).clone();
       if (part.kind === 'floor') mat.map = part.floor === 'garden' ? grass : wood;
       // Shared boundary vertices use world coordinates so neighbouring rotated

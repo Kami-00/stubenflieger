@@ -4,7 +4,7 @@ import { Euler, Quaternion, Ray, Vector3 } from 'three';
 import { HOUSE } from '../src/house.js';
 import { buildHouseSurfaceGeometries } from '../src/house-surface-geometry.js';
 
-const structure = parts => parts.filter(part => ['floor', 'wall', 'roof'].includes(part.kind));
+const structure = parts => parts.filter(part => ['floor', 'wall', 'roof'].includes(part.kind) || (part.kind === 'trim' && part.doorFrame === true));
 const box = (id, kind, size, position = [0, 0, 0], rotation = [0, 0, 0]) => ({ id, kind, size, position, rotation });
 const close = (actual, expected, label, epsilon = 1e-5) => assert(Math.abs(actual - expected) < epsilon, `${label}: ${actual} != ${expected}`);
 
@@ -56,7 +56,9 @@ function solidRayDistance(point, direction, boxes) {
     let near = -Infinity, far = Infinity;
     for (const [index, axis] of ['x', 'y', 'z'].entries()) {
       if (Math.abs(delta[axis]) < 1e-12) {
-        if (Math.abs(start[axis]) > part.size[index] / 2) { far = -Infinity; break; }
+        // A ray exactly along a jamb edge still touches the solid. Subtracting
+        // authored decimal coordinates can otherwise reject it by ~7e-17 m.
+        if (Math.abs(start[axis]) > part.size[index] / 2 + 1e-10) { far = -Infinity; break; }
       } else {
         const a = (-part.size[index] / 2 - start[axis]) / delta[axis], b = (part.size[index] / 2 - start[axis]) / delta[axis];
         near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b));
@@ -108,6 +110,29 @@ test('touching boxes remove internal opposite faces without opening the enclosur
     const surfaces = triangles(parts, buildHouseSurfaceGeometries(parts));
     close(surfaceArea(surfaces), 40, 'joined cuboids surface area'); close(signedVolume(surfaces), 16, 'joined cuboids volume');
     exteriorOnly(parts, surfaces);
+  }
+});
+
+test('door jamb owns the wall reveal without duplicate coplanar faces or changed clearance', () => {
+  // The jamb sits outside the door hole and projects 3cm beyond both wall faces.
+  // Its inner face used to coincide exactly with the wall's exposed end face.
+  for (const rotation of [0, Math.PI / 2]) {
+    const turn = part => ({ ...part, position: new Vector3(...part.position).applyAxisAngle(new Vector3(0, 1, 0), rotation).toArray(), rotation: [0, rotation, 0] });
+    const parts = [box('wall', 'wall', [2, 2.2, .12], [-1, 1.1, 0]),
+      { ...box('door-jamb', 'trim', [.035, 2.2, .18], [-.0175, 1.1, 0]), doorFrame: true },
+      box('window-trim', 'trim', [.035, 1.2, .15], [4, 1.1, 0])].map(turn);
+    const before = structuredClone(parts), geometry = buildHouseSurfaceGeometries(parts), surfaces = triangles(parts, geometry);
+    assert.deepEqual(parts, before, 'render clipping must not change hitboxes');
+    assert(!geometry.has('window-trim'), 'unrelated trims retain their existing rendering');
+    const revealNormal = new Vector3(1, 0, 0).applyAxisAngle(new Vector3(0, 1, 0), rotation);
+    const reveal = surfaces.filter(t => t.normal.dot(revealNormal) > .99999 && Math.abs(t.centre.dot(revealNormal)) < 1e-6);
+    assert(reveal.length > 0);
+    assert(reveal.every(t => t.id === 'door-jamb'), 'only the cream jamb may own the portal reveal');
+    close(surfaceArea(reveal), 2.2 * .18, 'exactly one visible reveal face');
+    close(signedVolume(surfaces), 2 * 2.2 * .12 + .035 * 2.2 * .06, 'wall/jamb union volume');
+    exteriorOnly(parts, surfaces);
+    const from = new Vector3(.15, 1.1, .041).applyAxisAngle(new Vector3(0, 1, 0), rotation);
+    close(rayDistance(from, revealNormal.clone().negate(), surfaces), .15, 'opening width unchanged');
   }
 });
 

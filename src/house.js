@@ -4,6 +4,7 @@ export const FLOOR_HEIGHT = 3.15;
 export const FLOORS = { ug: -3.15, eg: 0, og: 3.15, dg: 6.3 };
 const WALL = 0.12;
 const DOOR_HEIGHT = 2.2;
+const DOOR_THICKNESS = .055;
 const rooms = [], obstacles = [], doors = [], openings = [], collectibles = [], furniture = [];
 let serial = 0;
 
@@ -77,15 +78,17 @@ function wall(floor, horizontal, fixed, start, end, holes = [], height = FLOOR_H
     const centre = horizontal ? [(opening.a + opening.b) / 2, base + (low + high) / 2, fixed] : [fixed, base + (low + high) / 2, (opening.a + opening.b) / 2];
     openings.push({ id: opening.id || `${wallId}-window-${opening.a}`, floor, type: opening.type, open: opening.open ?? false, horizontal, fixed, from: opening.a, to: opening.b, sill: base + low, head: base + high, position: centre });
     if (opening.type === 'door') {
-      const hingeAt = opening.hingeEnd ? opening.b : opening.a;
-      const hinge = horizontal ? [hingeAt, base + DOOR_HEIGHT / 2, fixed] : [fixed, base + DOOR_HEIGHT / 2, hingeAt];
       const closedDirection = opening.hingeEnd ? -1 : 1;
+      // Keep the whole opened leaf inside the clear opening, including its
+      // thickness. A pivot on the wall edge buried half that thickness in it.
+      const hingeAt = (opening.hingeEnd ? opening.b : opening.a) + closedDirection * (DOOR_THICKNESS / 2 + .005);
+      const hinge = horizontal ? [hingeAt, base + DOOR_HEIGHT / 2, fixed] : [fixed, base + DOOR_HEIGHT / 2, hingeAt];
       const angle = (horizontal ? -opening.swing * closedDirection : opening.swing * closedDirection) * Math.PI / 2;
-      doors.push({ id: opening.id, name: opening.name, threshold: opening.threshold, rooms: opening.rooms, floor, size: [width - .025, DOOR_HEIGHT - .025, .055], position: centre, rotation: [0, horizontal ? 0 : Math.PI / 2, 0], hinge: { position: hinge, axis: 'y', angle }, color: floor === 'ug' ? '#788c82' : '#b99469', open: false });
+      doors.push({ id: opening.id, name: opening.name, threshold: opening.threshold, rooms: opening.rooms, floor, size: [width - .025, DOOR_HEIGHT - .025, DOOR_THICKNESS], position: [...centre], rotation: [0, horizontal ? 0 : Math.PI / 2, 0], hinge: { position: hinge, axis: 'y', angle }, color: floor === 'ug' ? '#788c82' : '#b99469', open: false });
       // Narrow trim lives outside the opening, so its usable size stays honest.
       const trim = .035;
       for (const edge of [opening.a - trim / 2, opening.b + trim / 2]) {
-        box(`${opening.id}-frame`, 'trim', horizontal ? [trim, DOOR_HEIGHT, .18] : [.18, DOOR_HEIGHT, trim], horizontal ? [edge, base + DOOR_HEIGHT / 2, fixed] : [fixed, base + DOOR_HEIGHT / 2, edge], '#f1e6cc', floor);
+        box(`${opening.id}-frame`, 'trim', horizontal ? [trim, DOOR_HEIGHT, .18] : [.18, DOOR_HEIGHT, trim], horizontal ? [edge, base + DOOR_HEIGHT / 2, fixed] : [fixed, base + DOOR_HEIGHT / 2, edge], '#f1e6cc', floor, { doorFrame: true });
       }
     } else {
       if (!opening.open) {
@@ -122,24 +125,32 @@ box('front-path', 'paving', [1.5, .045, 6], [7, -.005, 15], '#c7bfaa', 'garden')
 
 // Ground floor, matching the accepted plan (z is the plan's vertical axis).
 wall('eg', true, 0, 0, 14, [holeDoor(1.75, 3.15, 'dining-terrace', 'Esszimmer → Terrasse', 8, 'dining', 'garden', -1), holeDoor(11.5, 13.1, 'living-terrace', 'Wohnzimmer → Terrasse', 4, 'living', 'garden', -1)]);
-wall('eg', true, 12, 0, 14, [win(3.5, 4.9, true), holeDoor(6.3, 7.7, 'front-door', 'Haustür', 6, 'hall', 'garden', -1), win(12.45, 13.5)]);
+wall('eg', true, 12, 0, 14, [win(3.5, 4.9, true), holeDoor(6.3, 7.7, 'front-door', 'Haustür', 6, 'hall', 'garden', -1, true), win(12.45, 13.5)]);
 wall('eg', false, 0, 0, 12, [win(1.3, 3.1), win(9, 10.4)]);
 wall('eg', false, 14, 0, 12, [win(1.2, 2.4), win(8.8, 9.5)]);
 wall('eg', false, 5.5, 0, 12, [holeDoor(5.3, 6.6, 'hall-dining', 'Flur → Esszimmer', 5, 'hall', 'dining', -1), holeDoor(10, 11.3, 'kitchen-hall', 'Flur → Küche', 7, 'hall', 'kitchen', -1)]);
 wall('eg', false, 8.5, 0, 12, [holeDoor(5.55, 6.85, 'living-hall', 'Wohnzimmer → Flur', 2, 'living', 'hall', 1), holeDoor(8.4, 9.6, 'hall-cloakroom', 'Flur → Garderobe', 8, 'hall', 'cloakroom', 1)]);
-wall('eg', true, 5, 5.5, 8.5, [holeDoor(6.3, 7.7, 'hall-stairs', 'Flur → Treppenhaus', 9, 'hall', 'stairs', 1)]);
+wall('eg', true, 5, 5.5, 8.5, [holeDoor(6.3, 7.7, 'hall-stairs', 'Flur → Treppenhaus', 9, 'hall', 'stairs', -1, true)]);
 wall('eg', true, 7, 0, 5.5, [holeDoor(3.5, 4.9, 'dining-kitchen', 'Esszimmer → Küche', 7, 'dining', 'kitchen', 1)]);
 wall('eg', true, 7, 8.5, 14);
 wall('eg', false, 11, 7, 12, [holeDoor(7.55, 8.7, 'cloakroom-wc', 'Garderobe → Gäste-WC', 10, 'cloakroom', 'guest-wc', 1), holeDoor(10.35, 11.55, 'cloakroom-storage', 'Garderobe → Abstellraum', 12, 'cloakroom', 'storage', 1, true)]);
 wall('eg', true, 10, 11, 14);
 
-// In the narrow entrance hall these two leaves open all the way back against
-// their wall. A 90-degree leaf would block a neighbouring room's flight route.
+// Only these two cramped hall doors use the opposite jamb: the stair door
+// opens into the stairwell; the front door opens along the hall's right side.
+// Folding either leaf back 180° intersected the cross wall. Both neighbouring
+// room routes and the middle of the hall now remain unobstructed.
 for (const [id, outward] of [['hall-stairs', 1], ['front-door', -1]]) {
   const door = doors.find(item => item.id === id);
   door.position[2] += .095 * outward;
   door.hinge.position[2] += .095 * outward;
-  door.hinge.angle *= 2;
+}
+// The terrace paving is slightly raised; preserve leaf size and leave 1 mm
+// underneath it, while retaining clearance below the doorway lintel.
+for (const id of ['dining-terrace', 'living-terrace']) {
+  const door = doors.find(item => item.id === id);
+  door.position[1] += .006;
+  door.hinge.position[1] += .006;
 }
 
 for (const floor of ['ug', 'og']) {
