@@ -14,6 +14,8 @@ import { normalizeAircraftColor } from './cosmetics.js';
 import { applyAircraftColor } from './aircraft-appearance.js';
 import { createAircraftEffects } from './aircraft-effects.js';
 import { buildHouseSurfaceGeometries } from './house-surface-geometry.js';
+import { buildFurnitureSurfaceBatches } from './furniture-surface-geometry.js';
+import { createGardenBoundaryWarning } from './garden-boundary-warning.js';
 
 const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value));
 
@@ -24,6 +26,7 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = PCFShadowMap;
   renderer.outputColorSpace = SRGBColorSpace; renderer.toneMapping = ACESFilmicToneMapping; renderer.toneMappingExposure = 1.18;
   const scene = new Scene(); scene.background = new Color('#c9ddd5'); scene.fog = new Fog('#c9ddd5', 30, 90);
+  const gardenBoundaryWarning = createGardenBoundaryWarning(scene, house);
   const camera = new PerspectiveCamera(64, 1, .035, 120);
   camera.position.set(house.start.x, house.start.y + 1.3, house.start.z + 2.2); camera.lookAt(house.start.x, house.start.y, house.start.z - .5);
   scene.add(new HemisphereLight('#fff3d9', '#718169', 2.7));
@@ -59,6 +62,7 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   for (const geometry of surfaceGeometries.values()) geometries.add(geometry);
   const batches = new Map();
   for (const part of house.obstacles) {
+    if (part.furnitureId) continue;
     const group = floorGroups.get(part.floor) || floorGroups.get('garden');
     if (surfaceGeometries.has(part.id)) {
       const mat = material(part.color).clone();
@@ -75,6 +79,13 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
   for (const { group, color, glass: isGlass, parts } of batches.values()) {
     const mesh = new InstancedMesh(boxGeometry, material(color, isGlass ? { transparent: true, opacity: .36, roughness: .12, depthWrite: false } : {}), parts.length);
     parts.forEach((part, index) => mesh.setMatrixAt(index, transform(part))); mesh.instanceMatrix.needsUpdate = true; mesh.castShadow = !isGlass; mesh.receiveShadow = true; mesh.frustumCulled = false; group.add(mesh);
+  }
+  for (const { floor, parts, geometry } of buildFurnitureSurfaceBatches(house.obstacles)) {
+    geometries.add(geometry);
+    const mesh = new Mesh(geometry, material('#ffffff', { vertexColors: true }));
+    mesh.name = `furniture-surfaces-${floor}`; mesh.userData.surfaceParts = parts;
+    mesh.castShadow = mesh.receiveShadow = true;
+    (floorGroups.get(floor) || floorGroups.get('garden')).add(mesh);
   }
   const signGeometry = new BoxGeometry(.54, .23, .012); geometries.add(signGeometry);
   function doorSigns(door) {
@@ -195,13 +206,20 @@ export function createScene(canvas, physics, getViewport = () => ({ width: canva
     softLight.position.set(position.x, position.y + .6, position.z); softLight.intensity = room?.floor === 'ug' ? 7 : 3;
     sun.target.position.set(position.x, 1, position.z); sun.target.updateMatrixWorld(); sun.position.set(position.x - 12, 24, position.z - 14);
     effects.update(dt, elapsed);
+    gardenBoundaryWarning.update(position, camera.position, dt);
     updateCeiling(position);
   }
   function resize() { const viewport = getViewport() || {}; const width = Math.max(1, viewport.width || canvas.clientWidth || 1), height = Math.max(1, viewport.height || canvas.clientHeight || 1); renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); }
-  function render() { renderer.render(scene, camera); }
+  function render() {
+    // The flight camera is positioned after update(). Refresh the visible patch
+    // without advancing the proximity fade twice in one frame.
+    gardenBoundaryWarning.update(physics.plane?.position || plane.position, camera.position, 0);
+    renderer.render(scene, camera);
+  }
   resize(); window.addEventListener('gameviewportchange', resize);
   function dispose() {
     effects.dispose();
+    gardenBoundaryWarning.dispose();
     window.removeEventListener('gameviewportchange', resize); const allMaterials = new Set([...materials.values(), ...aircraftMaterials]), allGeometries = new Set([...geometries, ...aircraftGeometries]);
     scene.traverse(object => { if (object.geometry) allGeometries.add(object.geometry); if (object.material) for (const mat of Array.isArray(object.material) ? object.material : [object.material]) allMaterials.add(mat); if (object.shadow?.map) object.shadow.map.dispose(); });
     for (const geometry of allGeometries) geometry.dispose(); for (const mat of allMaterials) mat.dispose(); for (const texture of textures) texture.dispose(); scene.clear(); renderer.dispose();

@@ -73,8 +73,8 @@ function split(polygon, plane) {
   return { inside: clean(inside), outside: clean(outside) };
 }
 
-function ownsSurface(a, b) {
-  const rank = PRIORITY[a.kind] - PRIORITY[b.kind];
+function ownsSurface(a, b, priority) {
+  const rank = priority(a) - priority(b);
   return rank > 0 || (rank === 0 && a.id < b.id);
 }
 
@@ -109,7 +109,13 @@ function uvFor(point, axis, sign) {
  * either material. Furniture, window trims and collision boxes stay unchanged.
  */
 export function buildHouseSurfaceGeometries(parts) {
-  const boxes = parts.filter(part => STRUCTURE.has(part.kind) || (part.kind === 'trim' && part.doorFrame === true)).map(boxFor);
+  return buildBoxSurfaceGeometries(parts.filter(part => STRUCTURE.has(part.kind) || (part.kind === 'trim' && part.doorFrame === true)));
+}
+
+// Also used independently for the components of one furniture object. Keeping
+// each object separate preserves gaps and prevents unrelated materials joining.
+export function buildBoxSurfaceGeometries(parts, priority = part => PRIORITY[part.kind] ?? 0) {
+  const boxes = parts.map(boxFor);
   const result = new Map();
   for (const box of boxes) {
     const neighbours = boxes.filter(other => other !== box && overlaps(box, other));
@@ -118,7 +124,7 @@ export function buildHouseSurfaceGeometries(parts) {
       const face = faceFor(box, axis, sign);
       let polygons = [face.polygon];
       for (const other of neighbours) {
-        if (coplanarExterior(face, other) && ownsSurface(box.part, other.part)) continue;
+        if (coplanarExterior(face, other) && ownsSurface(box.part, other.part, priority)) continue;
         polygons = polygons.flatMap(polygon => subtractBox(polygon, other));
         if (!polygons.length) break;
       }
